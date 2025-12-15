@@ -1,0 +1,219 @@
+import React, { useEffect, useState } from 'react';
+import { View, Text, SectionList, TouchableOpacity, StyleSheet, ActivityIndicator, TextInput } from 'react-native';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db } from '../firebaseConfig';
+
+export default function CostalerosListScreen({ navigation }) {
+    const [sections, setSections] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [allCostaleros, setAllCostaleros] = useState([]);
+
+    useEffect(() => {
+        const q = query(collection(db, "costaleros"), orderBy("apellidos", "asc"));
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const costaleros = [];
+            querySnapshot.forEach((doc) => {
+                costaleros.push({ id: doc.id, ...doc.data() });
+            });
+            setAllCostaleros(costaleros);
+            setLoading(false);
+        });
+
+        return () => unsubscribe();
+    }, []);
+
+    useEffect(() => {
+        // Filter costaleros based on search query
+        const filtered = allCostaleros.filter(c => {
+            const fullName = `${c.nombre} ${c.apellidos}`.toLowerCase();
+            return fullName.includes(searchQuery.toLowerCase());
+        });
+        organizeSections(filtered);
+    }, [allCostaleros, searchQuery]);
+
+    const organizeSections = (data) => {
+        const grouped = {
+            '1': [], '2': [], '3': [], '4': [], '5': [], '6': [], '7': [], '0': []
+        };
+
+        data.forEach(c => {
+            const t = c.trabajadera ? c.trabajadera.toString() : '0';
+            if (grouped[t]) {
+                grouped[t].push(c);
+            } else {
+                grouped['0'].push(c);
+            }
+        });
+
+        const result = [];
+        for (let i = 1; i <= 7; i++) {
+            const tKey = i.toString();
+            if (grouped[tKey].length > 0) {
+                result.push({
+                    title: `Trabajadera ${i}`,
+                    data: grouped[tKey],
+                    count: grouped[tKey].length
+                });
+            }
+        }
+        if (grouped['0'].length > 0) {
+            result.push({
+                title: 'Sin Asignar',
+                data: grouped['0'],
+                count: grouped['0'].length
+            });
+        }
+        setSections(result);
+    };
+
+    const renderItem = ({ item }) => (
+        <TouchableOpacity
+            style={styles.item}
+            onPress={() => navigation.navigate('CostaleroForm', { costaleroId: item.id })}
+        >
+            <View>
+                <Text style={styles.name}>{item.apellidos}, {item.nombre}</Text>
+                <Text style={styles.details}>{item.puesto} - {item.altura}m</Text>
+            </View>
+            <Text style={styles.arrow}>›</Text>
+        </TouchableOpacity>
+    );
+
+    const renderSectionHeader = ({ section: { title, count } }) => (
+        <View style={styles.header}>
+            <Text style={styles.headerTitle}>{title} ({count})</Text>
+        </View>
+    );
+
+    return (
+        <View style={styles.container}>
+            <View style={styles.searchContainer}>
+                <TextInput
+                    style={styles.searchInput}
+                    placeholder="🔍 Buscar costalero..."
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                />
+            </View>
+
+            {loading ? (
+                <ActivityIndicator size="large" color="#0000ff" />
+            ) : (
+                <SectionList
+                    sections={sections}
+                    keyExtractor={(item, index) => item.id + index}
+                    renderItem={renderItem}
+                    renderSectionHeader={renderSectionHeader}
+                    ListEmptyComponent={<Text style={styles.emptyText}>No se encontraron costaleros.</Text>}
+                />
+            )}
+
+            <TouchableOpacity
+                style={styles.fab}
+                onPress={() => navigation.navigate('CostaleroForm')}
+            >
+                <Text style={styles.fabText}>+</Text>
+            </TouchableOpacity>
+        </View>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#FAFAFA'
+    },
+    searchContainer: {
+        backgroundColor: 'white',
+        padding: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E0E0E0',
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    searchInput: {
+        backgroundColor: '#F5F5F5',
+        borderRadius: 8,
+        padding: 12,
+        fontSize: 16,
+        color: '#212121',
+        borderWidth: 1,
+        borderColor: '#E0E0E0'
+    },
+    header: {
+        backgroundColor: '#F5F5F5',
+        padding: 14,
+        borderBottomWidth: 0,
+        marginBottom: 2
+    },
+    headerTitle: {
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#5E35B1',
+        letterSpacing: 0.5,
+        textTransform: 'uppercase'
+    },
+    item: {
+        backgroundColor: 'white',
+        padding: 16,
+        marginHorizontal: 16,
+        marginVertical: 4,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        borderRadius: 8,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.06,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    name: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#212121'
+    },
+    details: {
+        color: '#757575',
+        fontSize: 14,
+        marginTop: 4
+    },
+    arrow: {
+        fontSize: 22,
+        color: '#BDBDBD',
+        fontWeight: '300'
+    },
+    fab: {
+        position: 'absolute',
+        width: 56,
+        height: 56,
+        alignItems: 'center',
+        justifyContent: 'center',
+        right: 20,
+        bottom: 40,
+        backgroundColor: '#5E35B1',
+        borderRadius: 28,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 8,
+    },
+    fabText: {
+        color: 'white',
+        fontSize: 28,
+        fontWeight: '300'
+    },
+    emptyText: {
+        textAlign: 'center',
+        marginTop: 80,
+        color: '#9E9E9E',
+        fontSize: 16
+    }
+});
