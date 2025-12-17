@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, Button, StyleSheet, ScrollView, Alert, ActivityIndicator, Linking, TouchableOpacity } from 'react-native';
-import { doc, setDoc, getDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
 import { Picker } from '@react-native-picker/picker';
 import QRCode from 'react-native-qrcode-svg';
-import { db } from '../firebaseConfig';
+import { supabase } from '../supabaseConfig';
 
 export default function CostaleroFormScreen({ navigation, route }) {
     const { costaleroId } = route.params || {};
@@ -14,7 +13,8 @@ export default function CostaleroFormScreen({ navigation, route }) {
     const [apellidos, setApellidos] = useState('');
     const [puesto, setPuesto] = useState('');
     const [altura, setAltura] = useState('');
-    const [fechaNacimiento, setFechaNacimiento] = useState('');
+    const [fechaIngreso, setFechaIngreso] = useState('');
+    const [suplemento, setSuplemento] = useState('');
     const [trabajadera, setTrabajadera] = useState('1');
     const [telefono, setTelefono] = useState('');
     const [email, setEmail] = useState('');
@@ -27,18 +27,29 @@ export default function CostaleroFormScreen({ navigation, route }) {
 
     const loadCostalero = async (id) => {
         setLoading(true);
-        const docRef = doc(db, "costaleros", id);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-            const data = docSnap.data();
-            setNombre(data.nombre);
-            setApellidos(data.apellidos);
-            setPuesto(data.puesto);
-            setAltura(data.altura);
-            setFechaNacimiento(data.fechaNacimiento);
-            setTrabajadera(data.trabajadera || '1');
-            setTelefono(data.telefono || '');
-            setEmail(data.email || '');
+        try {
+            const { data, error } = await supabase
+                .from('costaleros')
+                .select('*')
+                .eq('id', id)
+                .single();
+
+            if (error) throw error;
+
+            if (data) {
+                setNombre(data.nombre);
+                setApellidos(data.apellidos);
+                setPuesto(data.puesto);
+                setAltura(data.altura ? String(data.altura) : '');
+                setFechaIngreso(data.fechaIngreso || '');
+                setSuplemento(data.suplemento || '');
+                setTrabajadera(data.trabajadera ? String(data.trabajadera) : '1');
+                setTelefono(data.telefono || '');
+                setEmail(data.email || '');
+            }
+        } catch (error) {
+            console.error(error);
+            Alert.alert("Error", "No se pudo cargar el costalero");
         }
         setLoading(false);
     };
@@ -55,7 +66,13 @@ export default function CostaleroFormScreen({ navigation, route }) {
                     onPress: async () => {
                         setLoading(true);
                         try {
-                            await deleteDoc(doc(db, "costaleros", costaleroId));
+                            const { error } = await supabase
+                                .from('costaleros')
+                                .delete()
+                                .eq('id', costaleroId);
+
+                            if (error) throw error;
+
                             Alert.alert("Eliminado", "Costalero eliminado correctamente.");
                             navigation.goBack();
                         } catch (e) {
@@ -76,28 +93,45 @@ export default function CostaleroFormScreen({ navigation, route }) {
 
         setLoading(true);
         try {
+            // Format phone number with +34 if not already present
+            let formattedPhone = telefono.trim();
+            if (formattedPhone && !formattedPhone.startsWith('+')) {
+                // Remove any leading zeros
+                formattedPhone = formattedPhone.replace(/^0+/, '');
+                // Add +34 prefix for Spain
+                formattedPhone = '+34' + formattedPhone;
+            }
+
             const costaleroData = {
                 nombre,
                 apellidos,
                 puesto,
-                altura,
-                fechaNacimiento,
-                trabajadera,
-                telefono,
+                altura: altura ? parseFloat(altura) : null,
+                fechaIngreso,
+                suplemento,
+                trabajadera: parseInt(trabajadera, 10),
+                telefono: formattedPhone,
                 email,
-                updatedAt: new Date()
+                updatedAt: new Date().toISOString()
             };
 
             if (costaleroId) {
                 // Update
-                await setDoc(doc(db, "costaleros", costaleroId), costaleroData, { merge: true });
+                const { error } = await supabase
+                    .from('costaleros')
+                    .update(costaleroData)
+                    .eq('id', costaleroId);
+
+                if (error) throw error;
                 Alert.alert("Éxito", "Costalero actualizado");
             } else {
                 // Create
-                // We generate a QR ID automatically if not present. For now, Firestore ID serves as QR ID.
-                costaleroData.createdAt = new Date();
-                const newDoc = await addDoc(collection(db, "costaleros"), costaleroData);
-                // Optionally update with its own ID if needed explicitly in field, but ID is in metadata
+                costaleroData.createdAt = new Date().toISOString();
+                const { error } = await supabase
+                    .from('costaleros')
+                    .insert([costaleroData]);
+
+                if (error) throw error;
                 Alert.alert("Éxito", "Costalero creado correctamente");
             }
             navigation.goBack();
@@ -115,32 +149,20 @@ export default function CostaleroFormScreen({ navigation, route }) {
 
     return (
         <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+            {/* 1. Nombre */}
             <Text style={styles.label}>Nombre</Text>
             <TextInput style={styles.input} value={nombre} onChangeText={setNombre} />
 
+            {/* 2. Apellidos */}
             <Text style={styles.label}>Apellidos</Text>
             <TextInput style={styles.input} value={apellidos} onChangeText={setApellidos} />
 
-            <Text style={styles.label}>Puesto</Text>
-            <View style={styles.input}>
-                <Picker
-                    selectedValue={puesto}
-                    onValueChange={(itemValue, itemIndex) => setPuesto(itemValue)}>
-                    <Picker.Item label="Seleccionar Puesto" value="" />
-                    <Picker.Item label="Patero Izquierdo" value="Patero Izquierdo" />
-                    <Picker.Item label="Patero Derecho" value="Patero Derecho" />
-                    <Picker.Item label="Fijador Izquierdo" value="Fijador Izquierdo" />
-                    <Picker.Item label="Fijador Derecho" value="Fijador Derecho" />
-                    <Picker.Item label="Costero Izquierdo" value="Costero Izquierdo" />
-                    <Picker.Item label="Costero Derecho" value="Costero Derecho" />
-                    <Picker.Item label="Corriente" value="Corriente" />
-                </Picker>
-            </View>
-
+            {/* 3. Trabajadera */}
             <Text style={styles.label}>Trabajadera</Text>
             <View style={styles.input}>
                 <Picker
                     selectedValue={trabajadera}
+                    style={{ color: '#212121' }}
                     onValueChange={(itemValue, itemIndex) => setTrabajadera(itemValue)}>
                     <Picker.Item label="Trabajadera 1" value="1" />
                     <Picker.Item label="Trabajadera 2" value="2" />
@@ -153,12 +175,56 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 </Picker>
             </View>
 
+            {/* 4. Puesto */}
+            <Text style={styles.label}>Puesto</Text>
+            <View style={styles.input}>
+                <Picker
+                    selectedValue={puesto}
+                    style={{ color: '#212121' }}
+                    onValueChange={(itemValue, itemIndex) => setPuesto(itemValue)}>
+                    <Picker.Item label="Seleccionar Puesto" value="" />
+                    <Picker.Item label="Patero Izquierdo" value="Patero Izquierdo" />
+                    <Picker.Item label="Patero Derecho" value="Patero Derecho" />
+                    <Picker.Item label="Fijador Izquierdo" value="Fijador Izquierdo" />
+                    <Picker.Item label="Fijador Derecho" value="Fijador Derecho" />
+                    <Picker.Item label="Costero Izquierdo" value="Costero Izquierdo" />
+                    <Picker.Item label="Costero Derecho" value="Costero Derecho" />
+                    <Picker.Item label="Corriente" value="Corriente" />
+                </Picker>
+            </View>
+
+            {/* 5. Suplemento (Nuevo) */}
+            <Text style={styles.label}>Suplemento</Text>
+            <View style={styles.input}>
+                <Picker
+                    selectedValue={suplemento}
+                    style={{ color: '#212121' }}
+                    onValueChange={(itemValue, itemIndex) => setSuplemento(itemValue)}>
+                    <Picker.Item label="Nada" value="" />
+                    <Picker.Item label="0.5 cm" value="0.5" />
+                    <Picker.Item label="1.0 cm" value="1.0" />
+                    <Picker.Item label="1.5 cm" value="1.5" />
+                    <Picker.Item label="2.0 cm" value="2.0" />
+                    <Picker.Item label="2.5 cm" value="2.5" />
+                    <Picker.Item label="3.0 cm" value="3.0" />
+                    <Picker.Item label="3.5 cm" value="3.5" />
+                    <Picker.Item label="4.0 cm" value="4.0" />
+                    <Picker.Item label="4.5 cm" value="4.5" />
+                    <Picker.Item label="5.0 cm" value="5.0" />
+                    <Picker.Item label="5.5 cm" value="5.5" />
+                    <Picker.Item label="6.0 cm" value="6.0" />
+                </Picker>
+            </View>
+
+            {/* 6. Altura */}
             <Text style={styles.label}>Altura (m)</Text>
             <TextInput style={styles.input} value={altura} onChangeText={setAltura} keyboardType="numeric" />
 
-            <Text style={styles.label}>Fecha Nacimiento (DD/MM/AAAA)</Text>
-            <TextInput style={styles.input} value={fechaNacimiento} onChangeText={setFechaNacimiento} />
+            {/* 7. Fecha Ingreso (Sustituye a Fecha Nacimiento) */}
+            <Text style={styles.label}>Fecha de Ingreso (DD/MM/AAAA)</Text>
+            <TextInput style={styles.input} value={fechaIngreso} onChangeText={setFechaIngreso} placeholder="Ej: 15/03/2018" />
 
+            {/* 8. Teléfono */}
             <Text style={styles.label}>Teléfono</Text>
             <TextInput style={styles.input} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" />
 
@@ -173,6 +239,10 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 </View>
             ) : null}
 
+            {/* 9. Email */}
+            <Text style={styles.label}>Email</Text>
+            <TextInput style={styles.input} value={email} onChangeText={setEmail} keyboardType="email-address" />
+
             {costaleroId && (
                 <View style={{ marginBottom: 20 }}>
                     <Button
@@ -181,9 +251,6 @@ export default function CostaleroFormScreen({ navigation, route }) {
                     />
                 </View>
             )}
-
-            <Text style={styles.label}>Email</Text>
-            <TextInput style={styles.input} value={email} onChangeText={setEmail} keyboardType="email-address" />
 
             {loading ? (
                 <ActivityIndicator color="blue" />

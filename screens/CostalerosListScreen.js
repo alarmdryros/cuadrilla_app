@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, SectionList, TouchableOpacity, StyleSheet, ActivityIndicator, TextInput } from 'react-native';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, SectionList, TouchableOpacity, StyleSheet, ActivityIndicator, TextInput, Alert } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../supabaseConfig';
 
 export default function CostalerosListScreen({ navigation }) {
     const [sections, setSections] = useState([]);
@@ -9,19 +9,29 @@ export default function CostalerosListScreen({ navigation }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [allCostaleros, setAllCostaleros] = useState([]);
 
-    useEffect(() => {
-        const q = query(collection(db, "costaleros"), orderBy("apellidos", "asc"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const costaleros = [];
-            querySnapshot.forEach((doc) => {
-                costaleros.push({ id: doc.id, ...doc.data() });
-            });
-            setAllCostaleros(costaleros);
-            setLoading(false);
-        });
+    const fetchCostaleros = async () => {
+        setLoading(true);
+        try {
+            const { data, error } = await supabase
+                .from('costaleros')
+                .select('*')
+                .order('apellidos', { ascending: true });
 
-        return () => unsubscribe();
-    }, []);
+            if (error) throw error;
+            setAllCostaleros(data || []);
+        } catch (error) {
+            console.error(error);
+            Alert.alert("Error", "No se pudieron cargar los costaleros");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchCostaleros();
+        }, [])
+    );
 
     useEffect(() => {
         // Filter costaleros based on search query

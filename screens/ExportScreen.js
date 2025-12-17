@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { supabase } from '../supabaseConfig';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
+import QRCode from 'qrcode';
 
 export default function ExportScreen() {
     const [loading, setLoading] = useState(false);
@@ -12,7 +13,6 @@ export default function ExportScreen() {
         const csvHeaders = headers.join(',');
         const csvRows = rows.map(row =>
             row.map(cell => {
-                // Escape commas and quotes
                 const cellStr = String(cell || '');
                 if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
                     return `"${cellStr.replace(/"/g, '""')}"`;
@@ -48,21 +48,24 @@ export default function ExportScreen() {
     const exportCostaleros = async () => {
         setLoading(true);
         try {
-            const q = query(collection(db, "costaleros"), orderBy("apellidos"));
-            const snapshot = await getDocs(q);
+            const { data: costaleros, error } = await supabase
+                .from('costaleros')
+                .select('*')
+                .order('apellidos');
+
+            if (error) throw error;
 
             const headers = ['Apellidos', 'Nombre', 'Trabajadera', 'Puesto', 'Altura (m)', 'Fecha Nacimiento', 'Teléfono', 'Email'];
             const rows = [];
 
-            snapshot.forEach(doc => {
-                const data = doc.data();
+            costaleros.forEach(data => {
                 rows.push([
                     data.apellidos || '',
                     data.nombre || '',
                     data.trabajadera || '',
                     data.puesto || '',
                     data.altura || '',
-                    data.fechaNacimiento || '',
+                    data.fecha_nacimiento || '',
                     data.telefono || '',
                     data.email || ''
                 ]);
@@ -82,19 +85,33 @@ export default function ExportScreen() {
     const exportAllEvents = async () => {
         setLoading(true);
         try {
-            const eventsQuery = query(collection(db, "eventos"), orderBy("fecha", "desc"));
-            const eventsSnapshot = await getDocs(eventsQuery);
+            // Get all events
+            const { data: events, error: eventsError } = await supabase
+                .from('eventos')
+                .select('*')
+                .order('fecha', { ascending: false });
+
+            if (eventsError) throw eventsError;
 
             const headers = ['Evento', 'Fecha', 'Lugar', 'Total Registrados', 'Presentes', 'Ausentes', 'Justificados', '% Asistencia'];
             const rows = [];
 
-            for (const eventDoc of eventsSnapshot.docs) {
-                const eventData = eventDoc.data();
-                const asistenciasSnapshot = await getDocs(collection(db, "eventos", eventDoc.id, "asistencias"));
+            // For each event, get attendance stats
+            // Could be optimized with a join or group by if possible, but iterative is fine for now
+            for (const eventData of events) {
+                const { data: asistencias, error: asistError } = await supabase
+                    .from('asistencias')
+                    .select('estado')
+                    .eq('event_id', eventData.id);
+
+                if (asistError) {
+                    console.error("Error fetching asistencias for event", eventData.id, asistError);
+                    continue;
+                }
 
                 let presentes = 0, ausentes = 0, justificados = 0;
-                asistenciasSnapshot.forEach(doc => {
-                    const status = doc.data().status;
+                asistencias.forEach(record => {
+                    const status = record.estado; // 'estado' en Supabase vs 'status' en Firebase
                     if (status === 'presente') presentes++;
                     else if (status === 'ausente') ausentes++;
                     else if (status === 'justificado') justificados++;
@@ -105,7 +122,7 @@ export default function ExportScreen() {
 
                 rows.push([
                     eventData.nombre || '',
-                    new Date(eventData.fecha).toLocaleDateString() || '',
+                    eventData.fecha ? new Date(eventData.fecha).toLocaleDateString() : '',
                     eventData.lugar || '',
                     total,
                     presentes,
@@ -124,6 +141,124 @@ export default function ExportScreen() {
         } finally {
             setLoading(false);
         }
+    };
+
+    const printQRReport = async () => {
+        setLoading(true);
+        try {
+            // Fetch costaleros sorted by trabajadera
+            const { data: costaleros, error } = await supabase
+                .from('costaleros')
+                .select('*')
+                .order('trabajadera');
+
+            if (error) throw error;
+
+            // Loop and generate QR for each (async)
+            let costalerosWithQR = [];
+            for (const data of costaleros) {
+                const id = data.id;
+                // Generate SVG String (Works in React Native without Canvas)
+                try {
+                    const svgString = await QRCode.toString(id, { type: 'svg', margin: 1 });
+                    costalerosWithQR.push({ ...data, id, qrSVG: svgString });
+                } catch (e) {
+                    console.error("QR Gen Error", e);
+                    costalerosWithQR.push({ ...data, id, qrSVG: null });
+                }
+            }
+
+            // HTML for the PDF
+            const html = `
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <style>
+                        body { font-family: 'Helvetica', sans-serif; padding: 20px; }
+                        .card { 
+                            border: 2px solid #000; 
+                            padding: 20px; 
+                            margin-bottom: 30px; 
+                            text-align: center; 
+                            page-break-inside: avoid;
+                            border-radius: 10px;
+                        }
+                        /* FORCE SVG Size */
+                        svg { width: 200px !important; height: 200px !important; margin: 10px auto; display: block; }
+                        
+                        .name { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+                        .meta { font-size: 18px; color: #555; }
+                        .section-title { 
+                            background-color: #5E35B1; 
+                            color: white; 
+                            padding: 10px; 
+                            font-size: 20px; 
+                            margin-top: 40px; 
+                            margin-bottom: 20px;
+                            text-align: center;
+                            font-weight: bold;
+                            border-radius: 5px;
+                            page-break-after: avoid;
+                        }
+                        .page-break { page-break-after: always; }
+                    </style>
+                </head>
+                <body>
+                    <h1 style="text-align: center;">Códigos QR - Cuadrilla</h1>
+                    
+                    ${generateCostalerosHTML(costalerosWithQR)}
+                </body>
+            </html>
+            `;
+
+            const { uri } = await Print.printToFileAsync({ html });
+            // Sharing on web/expo-go might behave differently but standard Sharing is fine
+            await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+
+        } catch (error) {
+            console.error(error);
+            Alert.alert('Error', error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const generateCostalerosHTML = (list) => {
+        // Group by Trabajadera
+        const grouped = { '1': [], '2': [], '3': [], '4': [], '5': [], '6': [], '7': [], '0': [] };
+        list.forEach(c => {
+            const t = c.trabajadera && grouped[c.trabajadera] ? c.trabajadera : '0';
+            grouped[t].push(c);
+        });
+
+        let htmlContent = '';
+
+        // Define clean names for layout
+        const tNames = { '1': 'Trabajadera 1', '2': 'Trabajadera 2', '3': 'Trabajadera 3', '4': 'Trabajadera 4', '5': 'Trabajadera 5', '6': 'Trabajadera 6', '7': 'Trabajadera 7', '0': 'Sin Asignar' };
+
+        Object.keys(grouped).forEach(key => {
+            const group = grouped[key];
+            if (group.length > 0) {
+                htmlContent += `<div class="section-title">${tNames[key]}</div>`;
+                htmlContent += `<div style="display: flex; flex-wrap: wrap; justify-content: space-around;">`;
+
+                group.forEach(c => {
+                    const qrValue = c.id;
+
+                    htmlContent += `
+                        <div class="card" style="width: 40%;">
+                            <div class="name">${c.nombre} ${c.apellidos}</div>
+                            <div class="meta">${c.puesto || 'Costalero'}</div>
+                            ${c.qrSVG ? c.qrSVG : '<div style="height:200px; display:flex; align-items:center; justify-content:center;">Error QR</div>'}
+                            <div class="meta" style="font-size: 12px; margin-top: 5px;">${qrValue}</div>
+                        </div>
+                    `;
+                });
+
+                htmlContent += `</div><div class="page-break"></div>`;
+            }
+        });
+        return htmlContent;
     };
 
     return (
@@ -145,6 +280,23 @@ export default function ExportScreen() {
                     >
                         <Text style={styles.exportButtonText}>
                             {loading ? 'Generando...' : 'Exportar Costaleros'}
+                        </Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.card}>
+                    <Text style={styles.cardIcon}>📄</Text>
+                    <Text style={styles.cardTitle}>Informe QR (PDF)</Text>
+                    <Text style={styles.cardDescription}>
+                        Genera un PDF con los códigos QR ordenados por trabajadera, listo para imprimir.
+                    </Text>
+                    <TouchableOpacity
+                        style={styles.exportButton}
+                        onPress={printQRReport}
+                        disabled={loading}
+                    >
+                        <Text style={styles.exportButtonText}>
+                            {loading ? 'Generando PDF...' : 'Descargar PDF QRs'}
                         </Text>
                     </TouchableOpacity>
                 </View>

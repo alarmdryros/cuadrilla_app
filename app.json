@@ -2,7 +2,7 @@
   "expo": {
     "name": "cuadrilla_app",
     "slug": "cuadrilla_app",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#0a0a0a"
     },
     "ios": {
       "supportsTablet": true
@@ -29,13 +29,16 @@
     "android": {
       "package": "com.zapedevil.cuadrilla_app",
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "CAMERA",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
       ],
-      "compileSdkVersion": 33,
-      "targetSdkVersion": 33,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1a5d1a"
       },
       "edgeToEdgeEnabled": true
     },
@@ -43,6 +46,12 @@
       "eas": {
         "projectId": "58fb4299-86d1-47c8-bfc0-5ce280cb6176"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/58fb4299-86d1-47c8-bfc0-5ce280cb6176"
     }
   }
 }

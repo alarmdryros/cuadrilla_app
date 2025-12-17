@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Button, ActivityIndicator, Alert, Vibration } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { doc, getDoc, addDoc, collection, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { supabase } from '../supabaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 
@@ -40,17 +39,22 @@ export default function QRScannerScreen({ route, navigation }) {
 
             console.log(`Syncing ${offlineScans.length} offline scans...`);
 
-            for (const scan of offlineScans) {
-                try {
-                    await addDoc(collection(db, "eventos", scan.eventId, "asistencias"), {
-                        costaleroId: scan.costaleroId,
-                        nombreCostalero: scan.nombreCostalero,
-                        timestamp: serverTimestamp(),
-                        status: 'presente'
-                    });
-                } catch (error) {
-                    console.error("Error syncing scan:", error);
-                }
+            // Map offline scans to Supabase schema
+            const recordsToInsert = offlineScans.map(scan => ({
+                event_id: scan.eventId,
+                costalero_id: scan.costaleroId,
+                nombreCostalero: scan.nombreCostalero, // maintain legacy if column exists
+                timestamp: scan.timestamp || new Date().toISOString(),
+                status: 'presente'
+            }));
+
+            const { error } = await supabase
+                .from('asistencias')
+                .insert(recordsToInsert);
+
+            if (error) {
+                console.error("Error syncing scans:", error);
+                return; // Don't clear if failed
             }
 
             // Clear synced scans
@@ -107,26 +111,31 @@ export default function QRScannerScreen({ route, navigation }) {
                 return;
             }
 
-            const costaleroRef = doc(db, "costaleros", costaleroId);
-            const costaleroSnap = await getDoc(costaleroRef);
+            // Fetch Costalero
+            const { data: costaleroData, error: costaleroError } = await supabase
+                .from('costaleros')
+                .select('*')
+                .eq('id', costaleroId)
+                .single();
 
-            if (!costaleroSnap.exists()) {
+            if (costaleroError || !costaleroData) {
                 setResultMessage(`❌ Error: Costalero no encontrado (ID: ${costaleroId})`);
                 setLoading(false);
                 return;
             }
 
-            const costaleroData = costaleroSnap.data();
             const nombreCompleto = `${costaleroData.nombre} ${costaleroData.apellidos}`;
 
             // 2. Verificar si ya está registrado en este evento
-            const asistenciasRef = collection(db, "eventos", eventId, "asistencias");
-            const q = query(asistenciasRef, where("costaleroId", "==", costaleroId));
-            const existingSnap = await getDocs(q);
+            const { data: existing, error: existingError } = await supabase
+                .from('asistencias')
+                .select('*')
+                .eq('event_id', eventId)
+                .eq('costalero_id', costaleroId);
 
-            if (!existingSnap.empty) {
+            if (existing && existing.length > 0) {
                 // Ya existe un registro
-                const existingDoc = existingSnap.docs[0].data();
+                const existingDoc = existing[0];
                 const statusText = existingDoc.status === 'presente' ? 'PRESENTE' :
                     existingDoc.status === 'justificado' ? 'JUSTIFICADO' : 'AUSENTE';
                 setResultMessage(`⚠️ ${nombreCompleto}\nYa registrado como: ${statusText}`);
@@ -135,12 +144,17 @@ export default function QRScannerScreen({ route, navigation }) {
             }
 
             // 3. Registrar asistencia (solo si no existe)
-            await addDoc(collection(db, "eventos", eventId, "asistencias"), {
-                costaleroId: costaleroId,
-                nombreCostalero: nombreCompleto,
-                timestamp: serverTimestamp(),
-                status: 'presente'
-            });
+            const { error: insertError } = await supabase
+                .from('asistencias')
+                .insert([{
+                    event_id: eventId,
+                    costalero_id: costaleroId,
+                    nombreCostalero: nombreCompleto,
+                    timestamp: new Date().toISOString(),
+                    status: 'presente'
+                }]);
+
+            if (insertError) throw insertError;
 
             setResultMessage(`✅ Asistencia registrada:\n${nombreCompleto}`);
         } catch (error) {

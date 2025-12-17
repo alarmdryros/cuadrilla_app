@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput } from 'react-native';
-import { collection, onSnapshot, query, addDoc, deleteDoc, doc, getDocs, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../supabaseConfig';
 
 export default function RelayManagementScreen({ route, navigation }) {
     const { eventId, eventName } = route.params;
@@ -32,70 +32,95 @@ export default function RelayManagementScreen({ route, navigation }) {
 
     const getPositionLabel = (position) => {
         const labels = {
-            'patero1': 'Patero 1',
-            'patero2': 'Patero 2',
-            'costero1': 'Costero 1',
-            'costero2': 'Costero 2',
-            'fijador1': 'Fijador 1',
-            'fijador2': 'Fijador 2',
-            'corriente': 'Corriente'
+            'patero1': 'PATERO IZQ',
+            'patero2': 'PATERO DER',
+            'costero1': 'COSTERO IZQ',
+            'costero2': 'COSTERO DER',
+            'fijador1': 'FIJADOR IZQ',
+            'fijador2': 'FIJADOR DER',
+            'corriente': 'CORRIENTE'
         };
         return labels[position] || position;
     };
 
-    useEffect(() => {
-        navigation.setOptions({ title: `Gestión Relevos` });
+    const fetchAllData = async () => {
+        try {
+            // 1. Costaleros
+            const { data: costalerosData, error: costError } = await supabase
+                .from('costaleros')
+                .select('*');
+            if (costError) throw costError;
+            setAllCostaleros(costalerosData || []);
 
-        // Cargar todos los costaleros
-        const loadCostaleros = async () => {
-            const snapshot = await getDocs(collection(db, "costaleros"));
-            const costalerosList = [];
-            snapshot.forEach(doc => {
-                costalerosList.push({ id: doc.id, ...doc.data() });
-            });
-            setAllCostaleros(costalerosList);
-        };
-        loadCostaleros();
+            // 2. Relay Points
+            const { data: pointsData, error: pointsError } = await supabase
+                .from('relay_points')
+                .select('*')
+                .eq('event_id', eventId)
+                .order('created_at', { ascending: true });
 
-        // 1. Escuchar Puntos de Relevo
-        const pointsQuery = query(collection(db, "eventos", eventId, "relayPoints"), orderBy("createdAt", "asc"));
-        const unsubscribePoints = onSnapshot(pointsQuery, (snapshot) => {
-            const points = [];
-            snapshot.forEach(doc => points.push({ id: doc.id, ...doc.data() }));
-            setRelayPoints(points);
+            if (pointsError) throw pointsError;
+            setRelayPoints(pointsData || []);
 
-            // Auto-select first point if none selected
-            if (points.length > 0 && !currentRelayPoint) {
-                setCurrentRelayPoint(points[0]);
+            // Auto-select first if needed
+            if (pointsData && pointsData.length > 0 && !currentRelayPoint) {
+                setCurrentRelayPoint(pointsData[0]);
             }
-        });
 
-        // 2. Escuchar todos los relevos del evento
-        const relevosQuery = query(collection(db, "eventos", eventId, "relevos"));
-        const unsubscribeRelevos = onSnapshot(relevosQuery, (snapshot) => {
-            const relevosList = [];
-            snapshot.forEach(doc => {
-                relevosList.push({ id: doc.id, ...doc.data() });
-            });
-            setRelevos(relevosList);
+            // 3. Relevos
+            const { data: relevosData, error: relevosError } = await supabase
+                .from('relevos')
+                .select('*')
+                .eq('event_id', eventId);
+
+            if (relevosError) throw relevosError;
+
+            // Map snake_case DB columns to camelCase for UI compatibility
+            const mappedRelevos = (relevosData || []).map(r => ({
+                ...r,
+                costaleroId: r.costalero_id,
+                relayPointId: r.relay_point_id,
+                nombreCostalero: r.nombre_costalero
+            }));
+            setRelevos(mappedRelevos);
+
+        } catch (error) {
+            console.error(error);
+            Alert.alert("Error", "No se pudieron cargar los datos");
+        } finally {
             setLoading(false);
-        });
+        }
+    };
 
-        return () => {
-            unsubscribePoints();
-            unsubscribeRelevos();
-        };
-    }, [eventId]);
+    useFocusEffect(
+        useCallback(() => {
+            navigation.setOptions({ title: `Gestión Relevos` });
+            fetchAllData();
+        }, [eventId])
+    );
 
     const createRelayPoint = async () => {
         if (!newPointName.trim()) return;
         try {
-            await addDoc(collection(db, "eventos", eventId, "relayPoints"), {
-                name: newPointName,
-                createdAt: new Date()
-            });
+            const { data, error } = await supabase
+                .from('relay_points')
+                .insert([{
+                    event_id: eventId,
+                    name: newPointName,
+                    created_at: new Date().toISOString()
+                }])
+                .select();
+
+            if (error) throw error;
+
             setNewPointName('');
             setNewPointModalVisible(false);
+
+            // Refresh data and select new point
+            await fetchAllData();
+            if (data && data.length > 0) {
+                setCurrentRelayPoint(data[0]);
+            }
         } catch (error) {
             Alert.alert('Error', error.message);
         }
@@ -111,17 +136,24 @@ export default function RelayManagementScreen({ route, navigation }) {
         if (!costalero) return;
 
         try {
-            await addDoc(collection(db, "eventos", eventId, "relevos"), {
-                trabajadera,
-                posicion: position,
-                costaleroId,
-                nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
-                estado: 'activo',
-                relayPointId: currentRelayPoint.id, // Link to current point
-                timestamp: new Date()
-            });
+            const { error } = await supabase
+                .from('relevos')
+                .insert([{
+                    event_id: eventId,
+                    trabajadera,
+                    posicion: position,
+                    costalero_id: costaleroId,
+                    nombre_costalero: `${costalero.nombre} ${costalero.apellidos}`,
+                    estado: 'activo',
+                    relay_point_id: currentRelayPoint.id,
+                    timestamp: new Date().toISOString()
+                }]);
+
+            if (error) throw error;
+
             setModalVisible(false);
             setShowAllTrabajaderas(false);
+            fetchAllData();
         } catch (error) {
             console.error(error);
             Alert.alert('Error', error.message);
@@ -129,24 +161,17 @@ export default function RelayManagementScreen({ route, navigation }) {
     };
 
     const removeFromPosition = async (relevoId) => {
-        Alert.alert(
-            'Confirmar',
-            '¿Quitar de esta posición?',
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                {
-                    text: 'Quitar',
-                    style: 'destructive',
-                    onPress: async () => {
-                        try {
-                            await deleteDoc(doc(db, "eventos", eventId, "relevos", relevoId));
-                        } catch (error) {
-                            Alert.alert('Error', error.message);
-                        }
-                    }
-                }
-            ]
-        );
+        try {
+            const { error } = await supabase
+                .from('relevos')
+                .delete()
+                .eq('id', relevoId);
+
+            if (error) throw error;
+            fetchAllData();
+        } catch (error) {
+            Alert.alert('Error', error.message);
+        }
     };
 
     const getAssignedCostalero = (trabajadera, position) => {
@@ -178,36 +203,84 @@ export default function RelayManagementScreen({ route, navigation }) {
         return available;
     };
 
-
-
-    // ... (rest of state)
-
-    // ... (rest of functions)
-
     const handleSwap = async (targetRelevo, reserveCostalero) => {
         try {
-            // Update the existing relevo document with the new costalero details
-            await deleteDoc(doc(db, "eventos", eventId, "relevos", targetRelevo.id));
+            // Delete old
+            const { error: delError } = await supabase
+                .from('relevos')
+                .delete()
+                .eq('id', targetRelevo.id);
+            if (delError) throw delError;
 
-            // Add new doc with same position info but new costalero
-            // We delete and add to ensure clean state, or we could update.
-            // Let's use delete + add to keep consistency with "assignPosition" logic
-            // actually, update is better to keep the ID, but for now delete+add is safer if structure changes
-            // Wait, we want to swap.
-            // B enters Position P.
+            // Insert new
+            const { error: insError } = await supabase
+                .from('relevos')
+                .insert([{
+                    event_id: eventId,
+                    trabajadera: targetRelevo.trabajadera,
+                    posicion: targetRelevo.posicion,
+                    costalero_id: reserveCostalero.id,
+                    nombre_costalero: `${reserveCostalero.nombre} ${reserveCostalero.apellidos}`,
+                    estado: 'activo',
+                    relay_point_id: currentRelayPoint.id,
+                    timestamp: new Date().toISOString()
+                }]);
 
-            await addDoc(collection(db, "eventos", eventId, "relevos"), {
-                trabajadera: targetRelevo.trabajadera,
-                posicion: targetRelevo.posicion,
-                costaleroId: reserveCostalero.id,
-                nombreCostalero: `${reserveCostalero.nombre} ${reserveCostalero.apellidos}`,
-                estado: 'activo',
-                relayPointId: currentRelayPoint.id,
-                timestamp: new Date()
-            });
+            if (insError) throw insError;
 
             setSwappingRelevo(null);
-            Alert.alert('Cambio realizado', `${reserveCostalero.nombre} entra por ${targetRelevo.nombreCostalero}`);
+            fetchAllData();
+        } catch (error) {
+            Alert.alert('Error', error.message);
+        }
+    };
+
+    const handleDirectSwap = async (relevo1, relevo2) => {
+        try {
+            // Use updates
+            const update1 = supabase
+                .from('relevos')
+                .update({
+                    costalero_id: relevo2.costaleroId,
+                    nombre_costalero: relevo2.nombreCostalero
+                })
+                .eq('id', relevo1.id);
+
+            const update2 = supabase
+                .from('relevos')
+                .update({
+                    costalero_id: relevo1.costaleroId,
+                    nombre_costalero: relevo1.nombreCostalero
+                })
+                .eq('id', relevo2.id);
+
+            const [res1, res2] = await Promise.all([update1, update2]);
+
+            if (res1.error) throw res1.error;
+            if (res2.error) throw res2.error;
+
+            setSwappingRelevo(null);
+            fetchAllData();
+        } catch (error) {
+            Alert.alert('Error', error.message);
+        }
+    };
+
+    const handleMoveToEmpty = async (relevo, targetTrabajadera, targetPosition) => {
+        try {
+            const { error } = await supabase
+                .from('relevos')
+                .update({
+                    trabajadera: targetTrabajadera,
+                    posicion: targetPosition,
+                    timestamp: new Date().toISOString()
+                })
+                .eq('id', relevo.id);
+
+            if (error) throw error;
+
+            setSwappingRelevo(null);
+            fetchAllData();
         } catch (error) {
             Alert.alert('Error', error.message);
         }
@@ -217,6 +290,14 @@ export default function RelayManagementScreen({ route, navigation }) {
         const assigned = getAssignedCostalero(trabajadera, position);
         const isCorriente = position === 'corriente';
         const isSelectedForSwap = swappingRelevo && assigned && swappingRelevo.id === assigned.id;
+
+        // Find full costalero data to get suplemento
+        let assignedCostaleroData = null;
+        if (assigned) {
+            assignedCostaleroData = allCostaleros.find(c => c.id === assigned.costaleroId);
+        }
+
+        const suplementoText = assignedCostaleroData?.suplemento ? ` • ${assignedCostaleroData.suplemento} cm` : '';
 
         return (
             <TouchableOpacity
@@ -230,15 +311,28 @@ export default function RelayManagementScreen({ route, navigation }) {
                 onPress={() => {
                     if (assigned) {
                         // Toggle selection for swap
-                        if (swappingRelevo && swappingRelevo.id === assigned.id) {
-                            setSwappingRelevo(null);
+                        if (swappingRelevo) {
+                            if (swappingRelevo.id === assigned.id) {
+                                setSwappingRelevo(null); // Deselect if tapping same
+                            } else {
+                                // Direct Swap Interaction
+                                handleDirectSwap(swappingRelevo, assigned);
+                            }
                         } else {
                             setSwappingRelevo(assigned);
                         }
                     } else {
-                        setSelectedPosition({ trabajadera, position });
-                        setShowAllTrabajaderas(false);
-                        setModalVisible(true);
+                        // Empty Slot Logic
+                        if (swappingRelevo) {
+                            // Move selected costalero to this empty slot
+                            handleMoveToEmpty(swappingRelevo, trabajadera, position);
+                        } else {
+                            // Standard assign logic
+                            setSelectedPosition({ trabajadera, position });
+                            setShowAllTrabajaderas(false);
+                            setModalVisible(true);
+                            setSwappingRelevo(null); // Ensure clean state
+                        }
                     }
                 }}
                 onLongPress={() => {
@@ -246,7 +340,10 @@ export default function RelayManagementScreen({ route, navigation }) {
                 }}
                 delayLongPress={500}
             >
-                <Text style={styles.positionLabel}>{getPositionLabel(position)}</Text>
+                <Text style={styles.positionLabel}>
+                    {getPositionLabel(position)}
+                    {suplementoText}
+                </Text>
                 {assigned ? (
                     <Text style={styles.positionName}>{assigned.nombreCostalero}</Text>
                 ) : (
@@ -311,13 +408,11 @@ export default function RelayManagementScreen({ route, navigation }) {
                                     key={costalero.id}
                                     style={[
                                         styles.reserveItem,
-                                        swappingRelevo && styles.reserveItemActive // Visual cue that they are clickable
+                                        swappingRelevo && styles.reserveItemActive
                                     ]}
                                     onPress={() => {
                                         if (swappingRelevo) {
                                             handleSwap(swappingRelevo, costalero);
-                                        } else {
-                                            // Optional: Show details or do nothing
                                         }
                                     }}
                                 >
@@ -608,15 +703,15 @@ const styles = StyleSheet.create({
         marginLeft: 4
     },
     addPointButtonText: {
-        fontSize: 22,
+        fontSize: 20,
         color: '#4A148C',
+        fontWeight: '600',
         marginTop: -2
     },
 
-    // --- Scroll Area ---
+    // --- Content ---
     scrollView: {
         flex: 1,
-        marginTop: -10, // Pull up to overlap slightly if we wanted, but let's keep clean
         paddingTop: 10
     },
 
@@ -672,7 +767,7 @@ const styles = StyleSheet.create({
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
-        shadowRadius: 3,
+        shadowRadius: 4,
         elevation: 2
     },
     positionCardCorriente: {
@@ -727,7 +822,7 @@ const styles = StyleSheet.create({
 
     // --- Reserves Section ---
     reservesContainer: {
-        marginTop: 12,
+        marginTop: 16,
         paddingTop: 16,
         borderTopWidth: 1,
         borderTopColor: '#F3F4F6'
@@ -787,14 +882,15 @@ const styles = StyleSheet.create({
     // Modal
     modalContainer: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.6)', // Darker dim
-        justifyContent: 'center', // Center modal for creation
-        padding: 20
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end'
     },
     modalContent: {
         backgroundColor: 'white',
-        borderRadius: 24,
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
         padding: 24,
+        maxHeight: '90%',
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.2,

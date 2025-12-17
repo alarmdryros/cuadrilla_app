@@ -1,26 +1,34 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, TextInput, Modal } from 'react-native';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
-import { db, auth } from '../firebaseConfig';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../supabaseConfig';
+import { MaterialIcons } from '@expo/vector-icons';
 
 export default function EventsListScreen({ navigation }) {
     const [eventos, setEventos] = useState([]);
     const [filteredEventos, setFilteredEventos] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
 
-    useEffect(() => {
-        const q = query(collection(db, "eventos"), orderBy("fecha", "desc"));
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const eventosData = [];
-            querySnapshot.forEach((doc) => {
-                eventosData.push({ id: doc.id, ...doc.data() });
-            });
-            setEventos(eventosData);
-        });
+    const fetchEventos = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('eventos')
+                .select('*')
+                .order('fecha', { ascending: false });
 
-        return () => unsubscribe();
-    }, []);
+            if (error) throw error;
+            setEventos(data || []);
+        } catch (error) {
+            console.error(error);
+            Alert.alert("Error", "No se pudieron cargar los eventos");
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchEventos();
+        }, [])
+    );
 
     useEffect(() => {
         // Filter events based on search query
@@ -33,19 +41,36 @@ export default function EventsListScreen({ navigation }) {
         setFilteredEventos(filtered);
     }, [eventos, searchQuery]);
 
-    const renderItem = ({ item }) => (
-        <TouchableOpacity
-            style={styles.item}
-            onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
-        >
-            <View style={{ flex: 1 }}>
-                <Text style={styles.name}>{item.nombre}</Text>
-                <Text style={styles.date}>📅 {new Date(item.fecha).toLocaleDateString()}</Text>
-                {item.lugar && <Text style={styles.place}>📍 {item.lugar}</Text>}
-            </View>
-            <Text style={styles.arrow}>›</Text>
-        </TouchableOpacity>
-    );
+    const renderItem = ({ item }) => {
+        // Determine event status based on current time
+        const now = new Date();
+        const eventDate = new Date(item.fecha);
+        const eventEndDate = item.fechaFin ? new Date(item.fechaFin) : null;
+
+        let statusColor = '#FFE5CC'; // Soft orange - Not started (default)
+
+        if (eventEndDate && now > eventEndDate) {
+            // Event finished
+            statusColor = '#FFD6D6'; // Soft red
+        } else if (now >= eventDate && (!eventEndDate || now <= eventEndDate)) {
+            // Event in progress
+            statusColor = '#D6F5D6'; // Soft green
+        }
+
+        return (
+            <TouchableOpacity
+                style={[styles.item, { backgroundColor: statusColor }]}
+                onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
+            >
+                <View style={{ flex: 1 }}>
+                    <Text style={styles.name}>{item.nombre}</Text>
+                    <Text style={styles.date}>📅 {new Date(item.fecha).toLocaleDateString()}</Text>
+                    {item.lugar && <Text style={styles.place}>📍 {item.lugar}</Text>}
+                </View>
+                <Text style={styles.arrow}>›</Text>
+            </TouchableOpacity>
+        );
+    };
 
     const EmptyComponent = () => (
         <View style={styles.emptyContainer}>
@@ -59,7 +84,7 @@ export default function EventsListScreen({ navigation }) {
         navigation.setOptions({
             headerLeft: () => (
                 <TouchableOpacity onPress={() => setMenuVisible(true)} style={{ marginLeft: 0, marginRight: 16 }}>
-                    <Text style={{ fontSize: 24, color: '#212121' }}>☰</Text>
+                    <MaterialIcons name="menu" size={28} color="#212121" />
                 </TouchableOpacity>
             ),
         });
@@ -72,7 +97,8 @@ export default function EventsListScreen({ navigation }) {
 
     const handleLogout = async () => {
         try {
-            await signOut(auth);
+            const { error } = await supabase.auth.signOut();
+            if (error) throw error;
             // App.js handles the state change and redirects to Login
         } catch (error) {
             Alert.alert("Error", "No se pudo cerrar sesión.");
@@ -113,35 +139,44 @@ export default function EventsListScreen({ navigation }) {
                 >
                     <View style={styles.menuContainer}>
                         <View style={styles.menuHeader}>
-                            <Text style={styles.menuTitle}>Menú</Text>
+                            <MaterialIcons name="event-note" size={64} color="#5E35B1" />
+                            <Text style={styles.menuTitle}>Cuadrilla App</Text>
+                            <Text style={styles.menuSubtitle}>Gestión de Costaleros</Text>
                         </View>
 
-                        <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('EventForm')}>
-                            <Text style={styles.menuIcon}>➕</Text>
-                            <Text style={styles.menuText}>Nuevo Evento</Text>
-                        </TouchableOpacity>
+                        <View style={styles.menuItemsContainer}>
+                            <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('EventForm')}>
+                                <View style={[styles.iconContainer, { backgroundColor: '#EDE7F6' }]}>
+                                    <MaterialIcons name="add-circle-outline" size={24} color="#5E35B1" />
+                                </View>
+                                <Text style={styles.menuText}>Nuevo Evento</Text>
+                                <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
+                            </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('CostalerosList')}>
-                            <Text style={styles.menuIcon}>👥</Text>
-                            <Text style={styles.menuText}>Cuadrilla</Text>
-                        </TouchableOpacity>
+                            <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('CostalerosList')}>
+                                <View style={[styles.iconContainer, { backgroundColor: '#E3F2FD' }]}>
+                                    <MaterialIcons name="people-outline" size={24} color="#1565C0" />
+                                </View>
+                                <Text style={styles.menuText}>Cuadrilla</Text>
+                                <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
+                            </TouchableOpacity>
 
-                        <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('Export')}>
-                            <Text style={styles.menuIcon}>📊</Text>
-                            <Text style={styles.menuText}>Exportar Datos</Text>
-                        </TouchableOpacity>
+                            <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('Export')}>
+                                <View style={[styles.iconContainer, { backgroundColor: '#E0F2F1' }]}>
+                                    <MaterialIcons name="assessment" size={24} color="#00695C" />
+                                </View>
+                                <Text style={styles.menuText}>Exportar Datos</Text>
+                                <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
+                            </TouchableOpacity>
+                        </View>
 
-                        <View style={styles.menuDivider} />
-
-                        <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
-                            <Text style={styles.menuIcon}>🚪</Text>
-                            <Text style={[styles.menuText, { color: '#D32F2F' }]}>Cerrar Sesión</Text>
-                        </TouchableOpacity>
-
-                        <TouchableOpacity style={styles.menuItem} onPress={() => setMenuVisible(false)}>
-                            <Text style={styles.menuIcon}>✖️</Text>
-                            <Text style={styles.menuText}>Cerrar Menú</Text>
-                        </TouchableOpacity>
+                        <View style={styles.menuFooter}>
+                            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+                                <MaterialIcons name="logout" size={20} color="#D32F2F" />
+                                <Text style={styles.logoutText}>Cerrar Sesión</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.versionText}>v1.3.0</Text>
+                        </View>
                     </View>
                 </TouchableOpacity>
             </Modal>
@@ -222,85 +257,91 @@ const styles = StyleSheet.create({
         fontSize: 16,
         textAlign: 'center'
     },
-    link: {
-        color: '#5E35B1',
-        marginTop: 10,
-        textDecorationLine: 'underline'
-    },
-    fabContainer: {
-        position: 'absolute',
-        right: 20,
-        bottom: 20,
-    },
-    fab: {
-        width: 56,
-        height: 56,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#5E35B1',
-        borderRadius: 28,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 8,
-    },
-    fabText: {
-        color: 'white',
-        fontSize: 28,
-        fontWeight: '300'
-    },
     // Menu Styles
     modalOverlay: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        backgroundColor: 'rgba(0,0,0,0.4)',
         flexDirection: 'row'
     },
     menuContainer: {
-        width: '75%',
+        width: '82%',
         backgroundColor: 'white',
         paddingVertical: 40,
-        paddingHorizontal: 20,
+        paddingHorizontal: 24,
         shadowColor: "#000",
         shadowOffset: { width: 4, height: 0 },
-        shadowOpacity: 0.2,
-        shadowRadius: 8,
-        elevation: 16
+        shadowOpacity: 0.1,
+        shadowRadius: 10,
+        elevation: 16,
+        borderTopRightRadius: 20,
+        borderBottomRightRadius: 20
     },
     menuHeader: {
-        marginBottom: 30,
-        paddingBottom: 20,
-        borderBottomWidth: 1,
-        borderBottomColor: '#EEEEEE'
+        marginBottom: 40,
+        marginTop: 10,
+        alignItems: 'center'
     },
     menuTitle: {
-        fontSize: 28,
+        fontSize: 22,
         fontWeight: '800',
-        color: '#4A148C',
-        letterSpacing: 1
+        color: '#424242',
+        marginTop: 10,
+        letterSpacing: 0.5
+    },
+    menuSubtitle: {
+        fontSize: 14,
+        color: '#9E9E9E',
+        fontWeight: '500',
+        marginTop: 4
+    },
+    menuItemsContainer: {
+        flex: 1
     },
     menuItem: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingVertical: 16,
-        paddingHorizontal: 8,
-        borderRadius: 8,
-        marginBottom: 4
+        paddingVertical: 12,
+        marginBottom: 16,
+        borderRadius: 12,
     },
-    menuIcon: {
-        fontSize: 24,
-        marginRight: 20,
-        width: 30,
-        textAlign: 'center'
+    iconContainer: {
+        width: 44,
+        height: 44,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 16
     },
     menuText: {
-        fontSize: 16,
+        fontSize: 17,
         fontWeight: '600',
-        color: '#424242'
+        color: '#424242',
+        letterSpacing: 0.3
     },
-    menuDivider: {
-        height: 1,
-        backgroundColor: '#EEEEEE',
-        marginVertical: 20
+    menuFooter: {
+        marginTop: 20,
+        paddingTop: 20,
+        borderTopWidth: 1,
+        borderTopColor: '#EEEEEE',
+        alignItems: 'center'
+    },
+    logoutButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFEBEE',
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        borderRadius: 30,
+        marginBottom: 16
+    },
+    logoutText: {
+        color: '#D32F2F',
+        fontWeight: '700',
+        marginLeft: 8,
+        fontSize: 15
+    },
+    versionText: {
+        fontSize: 12,
+        color: '#BDBDBD'
     }
 });

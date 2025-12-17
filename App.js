@@ -2,8 +2,7 @@ import * as React from 'react';
 import { View, Button, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth } from './firebaseConfig';
+import { supabase } from './supabaseConfig';
 
 // Screens
 import LoginScreen from './screens/LoginScreen';
@@ -17,25 +16,35 @@ import CostaleroHistoryScreen from './screens/CostaleroHistoryScreen';
 import EventTrabajaderasScreen from './screens/EventTrabajaderasScreen';
 import ExportScreen from './screens/ExportScreen';
 import RelayManagementScreen from './screens/RelayManagementScreen';
+import MeasurementScreen from './screens/MeasurementScreen';
 
 const Stack = createNativeStackNavigator();
 
 export default function App() {
-  const [user, setUser] = React.useState(null);
+  const [session, setSession] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    // 1. Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
       setLoading(false);
     });
 
-    return unsubscribe;
+    // 2. Listen for auth changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
     } catch (error) {
       console.error("Error signing out: ", error);
     }
@@ -49,7 +58,7 @@ export default function App() {
     );
   }
 
-  if (!user) {
+  if (!session) {
     return <LoginScreen />;
   }
 
@@ -122,6 +131,11 @@ export default function App() {
           name="RelayManagement"
           component={RelayManagementScreen}
           options={{ title: 'Gestión de Relevos' }}
+        />
+        <Stack.Screen
+          name="Measurements"
+          component={MeasurementScreen}
+          options={{ title: 'Mediciones' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

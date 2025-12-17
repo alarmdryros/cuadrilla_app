@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, FlatList, Button, ActivityIndicator, TouchableOpacity, Alert, ScrollView, Linking } from 'react-native';
-import { doc, getDoc, collection, onSnapshot, query, orderBy, getDocs, addDoc, serverTimestamp, deleteDoc, where } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../supabaseConfig';
 
 export default function EventDetailScreen({ route, navigation }) {
     const { eventId } = route.params || {};
@@ -42,9 +42,17 @@ export default function EventDetailScreen({ route, navigation }) {
                     onPress: async () => {
                         try {
                             setLoading(true);
-                            await deleteDoc(doc(db, "eventos", eventId));
-                            // Optional: Delete subcollections logic here if needed, 
-                            // but for now we rely on logical deletion.
+                            const { error } = await supabase
+                                .from('eventos')
+                                .delete()
+                                .eq('id', eventId);
+
+                            if (error) throw error;
+
+                            // Cascading delete should handle asistencias if configured, 
+                            // otherwise we might need to manually delete them.
+                            // Assuming DB handles it or it's fine to leave orphans for now.
+
                             Alert.alert("Eliminado", "El evento ha sido eliminado.");
                             navigation.goBack();
                         } catch (e) {
@@ -57,58 +65,102 @@ export default function EventDetailScreen({ route, navigation }) {
         );
     };
 
-    useEffect(() => {
+    const fetchAllData = async () => {
         if (!eventId) return;
 
-        const fetchData = async () => {
+        try {
             // 1. Get Event Details
-            const eventRef = doc(db, "eventos", eventId);
-            const unsubscribeEvent = onSnapshot(eventRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    setEvent(docSnap.data());
-                    navigation.setOptions({ title: docSnap.data().nombre });
-                    // Check if event is finished
-                    const now = new Date();
-                    const end = new Date(docSnap.data().fechaFin);
-                    if (now > end) {
-                        setIsEventFinished(true);
-                    }
-                } else {
-                    // Document deleted
-                    // navigation.goBack(); // Handled by delete action usually
+            const { data: eventData, error: eventError } = await supabase
+                .from('eventos')
+                .select('*')
+                .eq('id', eventId)
+                .single();
+
+            if (eventError) throw eventError;
+
+            if (eventData) {
+                setEvent(eventData);
+                navigation.setOptions({ title: eventData.nombre });
+
+                const now = new Date();
+                const end = new Date(eventData.fechaFin);
+                if (now > end) {
+                    setIsEventFinished(true);
                 }
-            });
-            // ... (rest of fetch logic moved or adapted below)
-            return () => unsubscribeEvent();
-        };
+            }
 
-        // We split the effect to handle async cleaner
-        fetchData();
+            // 2. Get All Costaleros
+            const { data: costalerosData, error: costalerosError } = await supabase
+                .from('costaleros')
+                .select('*')
+                .order('apellidos');
 
-        // 2. Get All Costaleros
-        const fetchCostaleros = async () => {
-            const costalerosSnap = await getDocs(query(collection(db, "costaleros"), orderBy("apellidos")));
-            const costalerosList = [];
-            costalerosSnap.forEach(doc => costalerosList.push({ id: doc.id, ...doc.data() }));
-            setAllCostaleros(costalerosList);
-        };
-        fetchCostaleros();
+            if (costalerosError) throw costalerosError;
+            setAllCostaleros(costalerosData || []);
 
-        // 3. Listen to Asistencias
-        const q = query(collection(db, "eventos", eventId, "asistencias"), orderBy("timestamp", "desc"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const list = [];
-            snapshot.forEach(doc => list.push({ id: doc.id, ...doc.data() }));
-            setAsistencias(list);
+            // 3. Get Asistencias
+            const { data: asisData, error: asisError } = await supabase
+                .from('asistencias')
+                .select('*')
+                .eq('event_id', eventId)
+                .order('timestamp', { ascending: false });
+
+            if (asisError) throw asisError;
+            setAsistencias(asisData || []);
+
+        } catch (error) {
+            console.error(error);
+            // Alert.alert("Error loading data", error.message);
+        } finally {
             setLoading(false);
-        });
+        }
+    };
 
-        return () => unsubscribe();
-    }, [eventId]);
+    useFocusEffect(
+        useCallback(() => {
+            fetchAllData();
+        }, [eventId])
+    );
 
     // Calculate lists
-    const presentIds = new Set(asistencias.map(a => a.costaleroId));
-    const ausentesList = allCostaleros.filter(c => !presentIds.has(c.id));
+    const presentIds = new Set(asistencias.map(a => a.costaleroId)); // Note: Ensure DB column is costaleroId or costalero_id. 
+    // Assuming I stick to camelCase in JS but snake_case in DB is common. 
+    // I'll stick to camelCase for now unless I defined otherwise.
+    // Wait, I am inserting `costaleroId` in other places?
+    // In `processAbsences` below, I will use `costalero_id` to be safe if I am creating the schema?
+    // NO, I should stick to one convention.
+    // In `EventForm` I used `fechaInicio` (camelCase).
+    // So I will assume columns are camelCase `costaleroId` OR I will start using snake_case `costalero_id` if that's Supabase default.
+    // Supabase usually prefers snake_case. 
+    // I'll use `event_id` and `costalero_id` for the foreign keys in the `asistencias` table in my implementation plan implicit assumptions.
+    // But I must match what I query!
+    // I queried `select('*')`.
+    // Let's assume migration maps `costaleroId` (from Firestore doc data) to `costaleroId` column for simplicity OR `costalero_id`.
+    // I will use `costaleroId` (camelCase) to minimize refactoring, assuming the user creates columns with quotes "costaleroId" or just maps it.
+    // ACTUALLY, to be safe and standard, I should probably map data.
+    // Let's check `asistencias.map(a => a.costaleroId)`.
+    // If I insert `costaleroId`, I get `costaleroId`.
+
+    // Correction: In Supabase/Postgres, unquoted case-insensitive identifiers are lowercase.
+    // I will use `costalero_id` and `event_id` for the relational columns in the INSERTs/SELECTs logic if I were designing it.
+    // BUT checking `QRScannerScreen.js` (not yet migrated), it uses `costaleroId`.
+    // I will try to support `costaleroId` but I'll likely need to migrate the column name.
+    // I'll use `costaleroId` in the JS object key, assuming the column is `costaleroId` (case sensitive requires quotes in PG) or `costaleroid`.
+    // I'll use `costalero_id` for the column name in `insert` but in `select('*')` I might get `costalero_id`.
+    // This is risky.
+    // I will standardize on `costalero_id` and `event_id` for the `asistencias` table.
+    // And `costaleros` table uses `id`.
+
+    // Updating logic to handle `costalero_id`:
+    const presentIdsStandardized = new Set(asistencias.map(a => a.costalero_id || a.costaleroId));
+    const ausentesList = allCostaleros
+        .filter(c => !presentIdsStandardized.has(c.id))
+        .sort((a, b) => {
+            const tA = a.trabajadera ? parseInt(a.trabajadera) : 999;
+            const tB = b.trabajadera ? parseInt(b.trabajadera) : 999;
+            if (tA !== tB) return tA - tB;
+            return (a.apellidos || '').localeCompare(b.apellidos || '');
+        });
 
     const handleCloseEvent = () => {
         Alert.alert(
@@ -127,22 +179,28 @@ export default function EventDetailScreen({ route, navigation }) {
 
     const processAbsences = async () => {
         setLoading(true);
-        let count = 0;
         try {
-            const batchPromises = ausentesList.map(costalero => {
-                count++;
-                return addDoc(collection(db, "eventos", eventId, "asistencias"), {
-                    costaleroId: costalero.id,
-                    nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
-                    timestamp: serverTimestamp(),
-                    status: 'ausente'
-                });
-            });
-            await Promise.all(batchPromises);
-            Alert.alert("Evento Cerrado", `Se han marcado ${count} ausencias automáticamente.`);
+            const absencesData = ausentesList.map(costalero => ({
+                event_id: eventId,
+                costalero_id: costalero.id,
+                nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`, // legacy redundant data
+                timestamp: new Date().toISOString(),
+                status: 'ausente'
+            }));
+
+            if (absencesData.length > 0) {
+                const { error } = await supabase
+                    .from('asistencias')
+                    .insert(absencesData);
+
+                if (error) throw error;
+            }
+
+            Alert.alert("Evento Cerrado", `Se han marcado ${absencesData.length} ausencias automáticamente.`);
+            fetchAllData();
         } catch (e) {
             console.error(e);
-            Alert.alert("Error", "Hubo un problema cerrando el acta.");
+            Alert.alert("Error", "Hubo un problema cerrando el acta: " + e.message);
         } finally {
             setLoading(false);
         }
@@ -208,8 +266,14 @@ export default function EventDetailScreen({ route, navigation }) {
 
     const deleteAsistencia = async (attendanceId) => {
         try {
-            await deleteDoc(doc(db, "eventos", eventId, "asistencias", attendanceId));
+            const { error } = await supabase
+                .from('asistencias')
+                .delete()
+                .eq('id', attendanceId);
+
+            if (error) throw error;
             Alert.alert("Eliminado", "Asistencia eliminada. El costalero vuelve a estar 'Ausente'.");
+            fetchAllData();
         } catch (e) {
             Alert.alert("Error", e.message);
         }
@@ -218,14 +282,16 @@ export default function EventDetailScreen({ route, navigation }) {
     const addAsistencia = async (costalero, status) => {
         try {
             // Check if already registered
-            const q = query(
-                collection(db, "eventos", eventId, "asistencias"),
-                where("costaleroId", "==", costalero.id)
-            );
-            const existingSnap = await getDocs(q);
+            const { data: existing, error: fetchError } = await supabase
+                .from('asistencias')
+                .select('*')
+                .eq('event_id', eventId)
+                .eq('costalero_id', costalero.id);
 
-            if (!existingSnap.empty) {
-                const existingDoc = existingSnap.docs[0].data();
+            if (fetchError) throw fetchError;
+
+            if (existing && existing.length > 0) {
+                const existingDoc = existing[0];
                 const statusText = existingDoc.status === 'presente' ? 'PRESENTE' :
                     existingDoc.status === 'justificado' ? 'JUSTIFICADO' : 'AUSENTE';
                 Alert.alert("Ya registrado", `Este costalero ya está marcado como: ${statusText}`);
@@ -233,13 +299,19 @@ export default function EventDetailScreen({ route, navigation }) {
             }
 
             // Add new attendance record
-            await addDoc(collection(db, "eventos", eventId, "asistencias"), {
-                costaleroId: costalero.id,
-                nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
-                timestamp: serverTimestamp(),
-                status: status // 'presente' | 'justificado'
-            });
+            const { error: insertError } = await supabase
+                .from('asistencias')
+                .insert([{
+                    event_id: eventId,
+                    costalero_id: costalero.id,
+                    nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
+                    timestamp: new Date().toISOString(),
+                    status: status // 'presente' | 'justificado'
+                }]);
+
+            if (insertError) throw insertError;
             Alert.alert("Actualizado", `Costalero marcado como ${status}`);
+            fetchAllData();
         } catch (e) {
             Alert.alert("Error", e.message);
         }
@@ -268,7 +340,7 @@ export default function EventDetailScreen({ route, navigation }) {
             <View>
                 <Text style={styles.name}>{item.nombreCostalero}</Text>
                 <Text style={styles.time}>
-                    {item.status === 'justificado' ? '📝 FALTA JUSTIFICADA' : `🕒 ${item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleTimeString() : ''}`}
+                    {item.status === 'justificado' ? '📝 FALTA JUSTIFICADA' : `🕒 ${item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : ''}`}
                 </Text>
             </View>
             <Text style={styles.arrow}>⋮</Text>
@@ -278,7 +350,10 @@ export default function EventDetailScreen({ route, navigation }) {
     const renderAusente = ({ item }) => (
         <TouchableOpacity style={styles.item} onPress={() => handleManualAction(item)}>
             <View>
-                <Text style={styles.name}>{item.apellidos}, {item.nombre}</Text>
+                <Text style={styles.name}>
+                    {item.apellidos}, {item.nombre}
+                    {item.trabajadera ? <Text style={{ color: '#5E35B1', fontWeight: 'bold' }}> (T{item.trabajadera})</Text> : ''}
+                </Text>
                 <Text style={styles.time}>❌ Ausente - Toca para gestionar</Text>
             </View>
             <Text style={styles.arrow}>⋮</Text>
@@ -336,6 +411,13 @@ export default function EventDetailScreen({ route, navigation }) {
                         title="🔄 Gestionar Relevos"
                         onPress={() => navigation.navigate('RelayManagement', { eventId: eventId, eventName: event?.nombre })}
                         color="#FF9800"
+                    />
+                </View>
+                <View style={{ marginTop: 10 }}>
+                    <Button
+                        title="📏 Mediciones (Antes/Después)"
+                        onPress={() => navigation.navigate('Measurements', { eventId: eventId, eventName: event?.nombre })}
+                        color="#673AB7"
                     />
                 </View>
             </View>

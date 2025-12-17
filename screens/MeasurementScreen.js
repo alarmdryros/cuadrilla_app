@@ -1,0 +1,287 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, StyleSheet, SectionList, ActivityIndicator, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../supabaseConfig';
+import { MaterialIcons } from '@expo/vector-icons';
+
+export default function MeasurementScreen({ route, navigation }) {
+    const { eventId, eventName } = route.params;
+    const [sections, setSections] = useState([]);
+    const [asistencias, setAsistencias] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [allCostaleros, setAllCostaleros] = useState([]);
+
+    const fetchData = async () => {
+        try {
+            // Load all costaleros to get trabajadera info
+            const { data: costalerosData, error: costError } = await supabase
+                .from('costaleros')
+                .select('*')
+                .order('apellidos');
+
+            if (costError) throw costError;
+            setAllCostaleros(costalerosData || []);
+
+            // Load asistencias
+            const { data: asistenciasData, error: asisError } = await supabase
+                .from('asistencias')
+                .select('*')
+                .eq('event_id', eventId)
+                .order('timestamp', { ascending: false });
+
+            if (asisError) throw asisError;
+
+            // Filter and map asistencias
+            const asistenciasList = (asistenciasData || [])
+                .filter(data => data.status === 'presente') // Only measure present people
+                .map(data => ({
+                    ...data,
+                    costaleroId: data.costalero_id,
+                    alturaAntes: data.altura_antes,
+                    alturaDespues: data.altura_despues
+                }));
+
+            setAsistencias(asistenciasList);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useFocusEffect(
+        useCallback(() => {
+            navigation.setOptions({ title: `Mediciones - ${eventName}` });
+            fetchData();
+        }, [eventId, eventName])
+    );
+
+    useEffect(() => {
+        if (allCostaleros.length > 0) {
+            organizeSections(asistencias);
+        }
+    }, [asistencias, allCostaleros]);
+
+    const organizeSections = (dataList) => {
+        const costaleroMap = {};
+        allCostaleros.forEach(c => {
+            costaleroMap[c.id] = c.trabajadera || '0';
+        });
+
+        const grouped = {
+            '1': [], '2': [], '3': [], '4': [], '5': [], '6': [], '7': [], '0': []
+        };
+
+        dataList.forEach(item => {
+            const trabajadera = costaleroMap[item.costaleroId] || '0';
+            if (grouped[trabajadera]) {
+                grouped[trabajadera].push(item);
+            } else {
+                if (!grouped['0']) grouped['0'] = [];
+                grouped['0'].push(item);
+            }
+        });
+
+        const result = [];
+        for (let i = 1; i <= 7; i++) {
+            const key = i.toString();
+            if (grouped[key] && grouped[key].length > 0) {
+                result.push({
+                    title: `Trabajadera ${i}`,
+                    data: grouped[key],
+                });
+            }
+        }
+        if (grouped['0'] && grouped['0'].length > 0) {
+            result.push({
+                title: 'Sin Asignar',
+                data: grouped['0'],
+            });
+        }
+        setSections(result);
+    };
+
+    const updateMeasurement = async (attendanceId, field, value) => {
+        try {
+            // Map camelCase field to snake_case column
+            const dbField = field === 'alturaAntes' ? 'altura_antes' : 'altura_despues';
+
+            const { error } = await supabase
+                .from('asistencias')
+                .update({
+                    [dbField]: value
+                })
+                .eq('id', attendanceId);
+
+            if (error) throw error;
+        } catch (e) {
+            console.error(e);
+            Alert.alert("Error", "No se pudo guardar la medición");
+        }
+    };
+
+    const renderItem = ({ item }) => (
+        <View style={styles.card}>
+            <View style={styles.cardHeader}>
+                <Text style={styles.name}>{item.nombreCostalero}</Text>
+            </View>
+
+            <View style={styles.measureRow}>
+                <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Altura ANTES</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="cm"
+                        keyboardType="numeric"
+                        defaultValue={item.alturaAntes ? String(item.alturaAntes) : ''}
+                        onEndEditing={(e) => updateMeasurement(item.id, 'alturaAntes', e.nativeEvent.text)}
+                    />
+                </View>
+
+                <View style={styles.divider} />
+
+                <View style={styles.inputContainer}>
+                    <Text style={styles.inputLabel}>Altura DESPUÉS</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="cm"
+                        keyboardType="numeric"
+                        defaultValue={item.alturaDespues ? String(item.alturaDespues) : ''}
+                        onEndEditing={(e) => updateMeasurement(item.id, 'alturaDespues', e.nativeEvent.text)}
+                    />
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderSectionHeader = ({ section }) => (
+        <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{section.title}</Text>
+            <Text style={styles.sectionCount}>{section.data.length} costaleros</Text>
+        </View>
+    );
+
+    if (loading) return <ActivityIndicator style={styles.center} size="large" color="#5E35B1" />;
+
+    return (
+        <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            style={styles.container}
+        >
+            <SectionList
+                sections={sections}
+                keyExtractor={(item) => item.id}
+                renderItem={renderItem}
+                renderSectionHeader={renderSectionHeader}
+                contentContainerStyle={styles.list}
+                stickySectionHeadersEnabled={false}
+                ListEmptyComponent={
+                    <View style={styles.emptyContainer}>
+                        <MaterialIcons name="person-off" size={64} color="#BDBDBD" />
+                        <Text style={styles.emptyText}>No hay costaleros confirmados (Presentes) aún.</Text>
+                    </View>
+                }
+            />
+        </KeyboardAvoidingView>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#FAFAFA'
+    },
+    center: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    list: {
+        padding: 16,
+        paddingBottom: 40
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 20,
+        marginBottom: 10,
+        paddingHorizontal: 4
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#5E35B1'
+    },
+    sectionCount: {
+        fontSize: 14,
+        color: '#757575'
+    },
+    card: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 2,
+    },
+    cardHeader: {
+        marginBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5',
+        paddingBottom: 8
+    },
+    name: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#212121'
+    },
+    measureRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+    },
+    inputContainer: {
+        flex: 1,
+        alignItems: 'center'
+    },
+    inputLabel: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: '#757575',
+        marginBottom: 8,
+        textTransform: 'uppercase'
+    },
+    input: {
+        backgroundColor: '#F5F5F5',
+        borderRadius: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        width: '80%',
+        textAlign: 'center',
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#5E35B1',
+        borderWidth: 1,
+        borderColor: '#E0E0E0'
+    },
+    divider: {
+        width: 1,
+        height: '80%',
+        backgroundColor: '#EEEEEE',
+        marginHorizontal: 10
+    },
+    emptyContainer: {
+        alignItems: 'center',
+        marginTop: 100
+    },
+    emptyText: {
+        marginTop: 20,
+        color: '#9E9E9E',
+        fontSize: 16,
+        textAlign: 'center'
+    }
+});

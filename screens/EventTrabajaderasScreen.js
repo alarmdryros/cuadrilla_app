@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, SectionList, ActivityIndicator } from 'react-native';
-import { collection, onSnapshot, query, orderBy, getDocs } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { useFocusEffect } from '@react-navigation/native';
+import { supabase } from '../supabaseConfig';
 
 export default function EventTrabajaderasScreen({ route, navigation }) {
     const { eventId, eventName } = route.params;
@@ -10,46 +10,52 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
     const [loading, setLoading] = useState(true);
     const [allCostaleros, setAllCostaleros] = useState([]);
 
-    useEffect(() => {
-        navigation.setOptions({ title: `Trabajaderas - ${eventName}` });
+    const fetchData = async () => {
+        try {
+            // Load all costaleros to get trabajadera info
+            const { data: costalerosData, error: costError } = await supabase
+                .from('costaleros')
+                .select('*')
+                .order('apellidos');
 
-        // Load all costaleros to get trabajadera info
-        const loadCostaleros = async () => {
-            const q = query(collection(db, "costaleros"), orderBy("apellidos"));
-            const snapshot = await getDocs(q);
-            const costalerosList = [];
-            snapshot.forEach(doc => {
-                costalerosList.push({ id: doc.id, ...doc.data() });
-            });
-            setAllCostaleros(costalerosList);
-        };
-        loadCostaleros();
+            if (costError) throw costError;
+            setAllCostaleros(costalerosData || []);
 
-        // Listen to attendance in real-time
-        const asistenciasQuery = query(
-            collection(db, "eventos", eventId, "asistencias"),
-            orderBy("timestamp", "desc")
-        );
+            // Load asistencias
+            const { data: asistenciasData, error: asisError } = await supabase
+                .from('asistencias')
+                .select('*')
+                .eq('event_id', eventId)
+                .order('timestamp', { ascending: false });
 
-        const unsubscribe = onSnapshot(asistenciasQuery, (snapshot) => {
-            const asistenciasList = [];
-            snapshot.forEach(doc => {
-                const data = doc.data();
-                // Include both presente and justificado
-                if (data.status === 'presente' || data.status === 'justificado') {
-                    asistenciasList.push({ id: doc.id, ...data });
-                }
-            });
+            if (asisError) throw asisError;
+
+            // Filter and map asistencias
+            const asistenciasList = (asistenciasData || [])
+                .filter(data => data.status === 'presente' || data.status === 'justificado')
+                .map(data => ({
+                    ...data,
+                    costaleroId: data.costalero_id // Map snake_case to camelCase for existing logic
+                }));
+
             setAsistencias(asistenciasList);
+        } catch (error) {
+            console.error(error);
+        } finally {
             setLoading(false);
-        });
+        }
+    };
 
-        return () => unsubscribe();
-    }, [eventId]);
+    useFocusEffect(
+        useCallback(() => {
+            navigation.setOptions({ title: `Trabajaderas - ${eventName}` });
+            fetchData();
+        }, [eventId, eventName])
+    );
 
     // Organize sections whenever asistencias or allCostaleros change
     useEffect(() => {
-        if (allCostaleros.length > 0 && asistencias.length >= 0) {
+        if (allCostaleros.length > 0) {
             organizeSections(asistencias);
         }
     }, [asistencias, allCostaleros]);
@@ -68,7 +74,13 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
 
         asistencias.forEach(asistencia => {
             const trabajadera = costaleroMap[asistencia.costaleroId] || '0';
-            grouped[trabajadera].push(asistencia);
+            if (grouped[trabajadera]) {
+                grouped[trabajadera].push(asistencia);
+            } else {
+                // Handle unexpected trabajadera just in case
+                if (!grouped['0']) grouped['0'] = [];
+                grouped['0'].push(asistencia);
+            }
         });
 
         // Count total per trabajadera
@@ -90,20 +102,20 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
             const key = i.toString();
             result.push({
                 title: `Trabajadera ${i}`,
-                data: grouped[key],
-                present: grouped[key].length,
-                total: totals[key],
+                data: grouped[key] || [],
+                present: (grouped[key] || []).length,
+                total: totals[key] || 0,
                 trabajaderaNum: i
             });
         }
 
         // Add "Sin Asignar" if there are any
-        if (totals['0'] > 0) {
+        if (totals['0'] > 0 || (grouped['0'] && grouped['0'].length > 0)) {
             result.push({
                 title: 'Sin Asignar',
-                data: grouped['0'],
-                present: grouped['0'].length,
-                total: totals['0'],
+                data: grouped['0'] || [],
+                present: (grouped['0'] || []).length,
+                total: totals['0'] || 0,
                 trabajaderaNum: 0
             });
         }
@@ -127,7 +139,7 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
                 )}
             </View>
             <Text style={styles.attendeeTime}>
-                {item.timestamp?.toDate ? new Date(item.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
             </Text>
         </View>
     );

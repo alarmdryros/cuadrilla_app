@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { collectionGroup, query, where, getDocs, doc, getDoc, orderBy } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert } from 'react-native';
+import { supabase } from '../supabaseConfig';
 
 export default function CostaleroHistoryScreen({ route, navigation }) {
     const { costaleroId, costaleroName } = route.params;
@@ -13,48 +12,38 @@ export default function CostaleroHistoryScreen({ route, navigation }) {
 
         const fetchHistory = async () => {
             try {
-                // Query all 'asistencias' subcollections where costaleroId matches
-                // Note: This requires an index in Firestore usually.
-                const q = query(
-                    collectionGroup(db, 'asistencias'),
-                    where('costaleroId', '==', costaleroId),
-                    orderBy('timestamp', 'desc')
-                );
+                // Efficient relational query
+                const { data, error } = await supabase
+                    .from('asistencias')
+                    .select(`
+                        id,
+                        status,
+                        timestamp,
+                        eventos (
+                            id,
+                            nombre,
+                            fecha
+                        )
+                    `)
+                    .eq('costalero_id', costaleroId)
+                    .order('timestamp', { ascending: false });
 
-                const querySnapshot = await getDocs(q);
-                const historyList = [];
+                if (error) throw error;
 
-                // We need to fetch event details for each attendance record because 
-                // the subcollection doc doesn't strictly contain the event Name unless we duplicated it.
-                // Optimisation: Read parent doc.
+                // Flatten structure
+                const historyList = (data || []).map(item => ({
+                    id: item.id,
+                    eventName: item.eventos?.nombre || 'Evento desconocido',
+                    eventDate: item.eventos?.fecha,
+                    timestamp: item.timestamp,
+                    status: item.status
+                }));
 
-                const promises = querySnapshot.docs.map(async (asistenciaDoc) => {
-                    const asistenciaData = asistenciaDoc.data();
+                setHistory(historyList);
 
-                    // Get parent Event doc
-                    // asistenciaDoc.ref.parent -> 'asistencias' collection
-                    // asistenciaDoc.ref.parent.parent -> Event document
-                    const eventDocRef = asistenciaDoc.ref.parent.parent;
-
-                    if (eventDocRef) {
-                        const eventSnap = await getDoc(eventDocRef);
-                        const eventData = eventSnap.exists() ? eventSnap.data() : { nombre: 'Evento Eliminado' };
-
-                        return {
-                            id: asistenciaDoc.id,
-                            eventName: eventData.nombre,
-                            eventDate: eventData.fecha,
-                            ...asistenciaData
-                        };
-                    }
-                    return null;
-                });
-
-                const results = await Promise.all(promises);
-                setHistory(results.filter(r => r !== null));
             } catch (error) {
                 console.error("Error fetching history: ", error);
-                // Handle missing index error gracefully if possible, or just log
+                Alert.alert("Error", "No se pudo cargar el historial.");
             } finally {
                 setLoading(false);
             }
@@ -97,6 +86,7 @@ export default function CostaleroHistoryScreen({ route, navigation }) {
                 data={history}
                 keyExtractor={item => item.id}
                 renderItem={renderItem}
+                contentContainerStyle={{ paddingTop: 20, paddingBottom: 20 }}
                 ListEmptyComponent={<Text style={styles.empty}>No hay registros de asistencia.</Text>}
             />
         </View>

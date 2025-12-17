@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, ScrollView, Alert, TouchableOpacity, Platform } from 'react-native';
+import { View, Text, TextInput, StyleSheet, ScrollView, Alert, TouchableOpacity, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { addDoc, collection, doc, setDoc } from 'firebase/firestore';
-import { db } from '../firebaseConfig';
+import { supabase } from '../supabaseConfig';
+import { MaterialIcons } from '@expo/vector-icons';
 
 export default function EventFormScreen({ navigation, route }) {
     const { eventData } = route.params || {};
@@ -21,15 +21,15 @@ export default function EventFormScreen({ navigation, route }) {
 
     // Update title if editing
     React.useLayoutEffect(() => {
-        if (eventData) {
-            navigation.setOptions({ title: 'Editar Evento' });
-        }
+        navigation.setOptions({
+            title: eventData ? 'Editar Evento' : 'Nuevo Evento',
+            headerStyle: { backgroundColor: '#F8F9FA' },
+            headerShadowVisible: false,
+        });
     }, [navigation, eventData]);
 
     const onDateChange = (event, selectedDate, setter, currentVal) => {
-        if (event.type === 'dismissed') {
-            return;
-        }
+        if (event.type === 'dismissed') return;
         const currentDate = selectedDate || currentVal;
         setter(currentDate);
         if (Platform.OS === 'android') {
@@ -40,11 +40,11 @@ export default function EventFormScreen({ navigation, route }) {
 
     const handleSave = async () => {
         if (!nombre || !lugar) {
-            Alert.alert("Error", "Nombre y Lugar son obligatorios");
+            Alert.alert("⚠️ Faltan datos", "Por favor, indica un Nombre y un Lugar para el evento.");
             return;
         }
         if (fechaFin <= fechaInicio) {
-            Alert.alert("Error", "La fecha de fin debe ser posterior al inicio");
+            Alert.alert("⚠️ Fechas inválidas", "La fecha de fin debe ser posterior al inicio.");
             return;
         }
 
@@ -56,18 +56,25 @@ export default function EventFormScreen({ navigation, route }) {
                 fechaInicio: fechaInicio.toISOString(),
                 fechaFin: fechaFin.toISOString(),
                 fecha: fechaInicio.toISOString(), // Legacy support
-                updatedAt: new Date() // Track updates
+                updatedAt: new Date().toISOString()
             };
 
             if (eventData?.id) {
-                // Update existing
-                await setDoc(doc(db, "eventos", eventData.id), dataToSave, { merge: true });
-                Alert.alert("Éxito", "Evento actualizado correctamente");
+                const { error } = await supabase
+                    .from('eventos')
+                    .update(dataToSave)
+                    .eq('id', eventData.id);
+
+                if (error) throw error;
+                Alert.alert("✅ Actualizado", "Evento modificado correctamente");
             } else {
-                // Create new
-                dataToSave.createdAt = new Date();
-                await addDoc(collection(db, "eventos"), dataToSave);
-                Alert.alert("Éxito", "Evento creado correctamente");
+                dataToSave.createdAt = new Date().toISOString();
+                const { error } = await supabase
+                    .from('eventos')
+                    .insert([dataToSave]);
+
+                if (error) throw error;
+                Alert.alert("✅ Creado", "Evento creado correctamente");
             }
             navigation.goBack();
         } catch (e) {
@@ -78,134 +85,235 @@ export default function EventFormScreen({ navigation, route }) {
         }
     };
 
-    const formatDate = (date) => date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
     return (
-        <ScrollView style={styles.container}>
-            <Text style={styles.label}>Nombre del Evento</Text>
-            <TextInput style={styles.input} value={nombre} onChangeText={setNombre} placeholder="Ej: Ensayo General, Salida Procesional" />
+        <View style={styles.mainContainer}>
+            <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
 
-            <Text style={styles.label}>Lugar</Text>
-            <TextInput style={styles.input} value={lugar} onChangeText={setLugar} placeholder="Ej: Casa Hermandad" />
+                {/* SECCIÓN 1: DATOS BÁSICOS */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialIcons name="info-outline" size={24} color="#5E35B1" />
+                        <Text style={styles.sectionTitle}>Información del Evento</Text>
+                    </View>
 
-            {/* FECHA INICIO */}
-            <Text style={styles.label}>Inicio del Evento</Text>
-            <View style={styles.row}>
-                <TouchableOpacity style={styles.dateBtn} onPress={() => setShowInicioDate(true)}>
-                    <Text>{fechaInicio.toLocaleDateString()}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.dateBtn} onPress={() => setShowInicioTime(true)}>
-                    <Text>{fechaInicio.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                    <View style={styles.card}>
+                        <Text style={styles.label}>Nombre del Evento</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={nombre}
+                            onChangeText={setNombre}
+                            placeholder="Ej: Ensayo General"
+                            placeholderTextColor="#BDBDBD"
+                        />
+
+                        <Text style={styles.label}>Lugar</Text>
+                        <TextInput
+                            style={styles.input}
+                            value={lugar}
+                            onChangeText={setLugar}
+                            placeholder="Ej: Casa Hermandad"
+                            placeholderTextColor="#BDBDBD"
+                        />
+                    </View>
+                </View>
+
+                {/* SECCIÓN 2: HORARIOS */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                        <MaterialIcons name="access-time" size={24} color="#5E35B1" />
+                        <Text style={styles.sectionTitle}>Planificación Temporal</Text>
+                    </View>
+
+                    <View style={styles.card}>
+                        {/* INICIO */}
+                        <Text style={styles.subHeader}>📅  Inicio</Text>
+                        <View style={styles.row}>
+                            <TouchableOpacity style={styles.datePickerCard} onPress={() => setShowInicioDate(true)}>
+                                <MaterialIcons name="calendar-today" size={20} color="#5E35B1" />
+                                <Text style={styles.dateText}>{fechaInicio.toLocaleDateString()}</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.datePickerCard} onPress={() => setShowInicioTime(true)}>
+                                <MaterialIcons name="schedule" size={20} color="#5E35B1" />
+                                <Text style={styles.dateText}>
+                                    {fechaInicio.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.divider} />
+
+                        {/* FIN */}
+                        <Text style={styles.subHeader}>🏁  Fin (Cierre automático)</Text>
+                        <View style={styles.row}>
+                            <TouchableOpacity style={styles.datePickerCard} onPress={() => setShowFinDate(true)}>
+                                <MaterialIcons name="calendar-today" size={20} color="#616161" />
+                                <Text style={styles.dateText}>{fechaFin.toLocaleDateString()}</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.datePickerCard} onPress={() => setShowFinTime(true)}>
+                                <MaterialIcons name="schedule" size={20} color="#616161" />
+                                <Text style={styles.dateText}>
+                                    {fechaFin.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+
+                {/* ESPACIO EXTRA AL FINAL PARA EL BOTÓN FLOTANTE */}
+                <View style={{ height: 100 }} />
+
+                {/* PICKERS OCULTOS (MODALES) */}
+                {(showInicioDate || showInicioTime) && (
+                    <DateTimePicker
+                        value={fechaInicio}
+                        mode={showInicioDate ? 'date' : 'time'}
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={(e, d) => {
+                            onDateChange(e, d, setFechaInicio, fechaInicio);
+                            if (Platform.OS === 'ios') {
+                                if (showInicioDate) setShowInicioDate(false);
+                                if (showInicioTime) setShowInicioTime(false);
+                            }
+                        }}
+                    />
+                )}
+                {(showFinDate || showFinTime) && (
+                    <DateTimePicker
+                        value={fechaFin}
+                        mode={showFinDate ? 'date' : 'time'}
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        onChange={(e, d) => {
+                            onDateChange(e, d, setFechaFin, fechaFin);
+                            if (Platform.OS === 'ios') {
+                                if (showFinDate) setShowFinDate(false);
+                                if (showFinTime) setShowFinTime(false);
+                            }
+                        }}
+                    />
+                )}
+
+            </ScrollView>
+
+            <View style={styles.footer}>
+                <TouchableOpacity style={styles.saveButton} onPress={handleSave} disabled={loading}>
+                    <Text style={styles.saveButtonText}>
+                        {loading ? "Guardando..." : (eventData ? "Guardar Cambios" : "Crear Evento")}
+                    </Text>
+                    <MaterialIcons name="check" size={24} color="white" style={{ marginLeft: 8 }} />
                 </TouchableOpacity>
             </View>
-
-            {(showInicioDate || showInicioTime) && (
-                <DateTimePicker
-                    value={fechaInicio}
-                    mode={showInicioDate ? 'date' : 'time'}
-                    display="default"
-                    onChange={(e, d) => {
-                        onDateChange(e, d, setFechaInicio, fechaInicio);
-                        if (Platform.OS === 'android') { setShowInicioDate(false); setShowInicioTime(false); }
-                        else {
-                            // iOS logic if needed embedded
-                            if (showInicioDate) setShowInicioDate(false);
-                            if (showInicioTime) setShowInicioTime(false);
-                        }
-                    }}
-                />
-            )}
-
-
-            {/* FECHA FIN */}
-            <Text style={styles.label}>Fin del Evento (Cierre automático)</Text>
-            <View style={styles.row}>
-                <TouchableOpacity style={styles.dateBtn} onPress={() => setShowFinDate(true)}>
-                    <Text>{fechaFin.toLocaleDateString()}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.dateBtn} onPress={() => setShowFinTime(true)}>
-                    <Text>{fechaFin.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
-                </TouchableOpacity>
-            </View>
-
-            {(showFinDate || showFinTime) && (
-                <DateTimePicker
-                    value={fechaFin}
-                    mode={showFinDate ? 'date' : 'time'}
-                    display="default"
-                    onChange={(e, d) => {
-                        onDateChange(e, d, setFechaFin, fechaFin);
-                        if (Platform.OS === 'android') { setShowFinDate(false); setShowFinTime(false); }
-                        else {
-                            if (showFinDate) setShowFinDate(false);
-                            if (showFinTime) setShowFinTime(false);
-                        }
-                    }}
-                />
-            )}
-
-            <TouchableOpacity style={styles.saveButton} onPress={handleSave} disabled={loading}>
-                <Text style={styles.saveButtonText}>{loading ? "Guardando..." : (eventData ? "Guardar Cambios" : "Crear Evento")}</Text>
-            </TouchableOpacity>
-        </ScrollView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
+    mainContainer: {
+        flex: 1,
+        backgroundColor: '#F8F9FA',
+    },
     container: {
         flex: 1,
-        backgroundColor: '#FAFAFA'
     },
     scrollContent: {
-        padding: 20
+        padding: 20,
+    },
+    section: {
+        marginBottom: 25,
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 12,
+        paddingLeft: 4,
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#4527A0',
+        marginLeft: 10,
+    },
+    card: {
+        backgroundColor: 'white',
+        borderRadius: 16,
+        padding: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
     },
     label: {
         fontSize: 14,
         fontWeight: '600',
+        color: '#616161',
         marginBottom: 8,
-        color: '#424242',
-        letterSpacing: 0.3
+        marginTop: 4,
     },
     input: {
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        borderRadius: 10,
-        padding: 14,
-        marginBottom: 18,
-        backgroundColor: 'white',
+        backgroundColor: '#F5F5F5',
+        borderRadius: 12,
+        padding: 16,
         fontSize: 16,
         color: '#212121',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 1,
-    },
-    row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-    dateButton: {
+        marginBottom: 20,
         borderWidth: 1,
-        borderColor: '#E0E0E0',
-        borderRadius: 10,
-        padding: 14,
-        width: '48%',
+        borderColor: 'transparent',
+    },
+    subHeader: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#424242',
+        marginBottom: 12,
+        marginTop: 4,
+    },
+    row: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+    },
+    datePickerCard: {
+        flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'white',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 1,
+        backgroundColor: '#F5F5F5', // tarjeta gris suave
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+        borderRadius: 12,
+        width: '48%',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: '#EEEEEE',
     },
     dateText: {
-        fontSize: 16,
-        color: '#212121'
+        marginLeft: 8,
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#424242',
+    },
+    divider: {
+        height: 1,
+        backgroundColor: '#EEEEEE',
+        marginVertical: 20,
+    },
+    footer: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'white',
+        padding: 20,
+        borderTopWidth: 1,
+        borderTopColor: '#EEEEEE',
+        paddingBottom: Platform.OS === 'ios' ? 30 : 50,
     },
     saveButton: {
         backgroundColor: '#5E35B1',
-        padding: 16,
-        borderRadius: 12,
+        borderRadius: 14,
+        paddingVertical: 16,
+        flexDirection: 'row',
+        justifyContent: 'center',
         alignItems: 'center',
-        marginTop: 20,
         shadowColor: "#5E35B1",
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
@@ -214,8 +322,7 @@ const styles = StyleSheet.create({
     },
     saveButtonText: {
         color: 'white',
-        fontSize: 16,
+        fontSize: 18,
         fontWeight: '700',
-        letterSpacing: 0.5
     }
 });
