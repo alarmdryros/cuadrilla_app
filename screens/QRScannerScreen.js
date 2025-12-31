@@ -39,22 +39,48 @@ export default function QRScannerScreen({ route, navigation }) {
 
             console.log(`Syncing ${offlineScans.length} offline scans...`);
 
-            // Map offline scans to Supabase schema
-            const recordsToInsert = offlineScans.map(scan => ({
-                event_id: scan.eventId,
-                costalero_id: scan.costaleroId,
-                nombreCostalero: scan.nombreCostalero, // maintain legacy if column exists
-                timestamp: scan.timestamp || new Date().toISOString(),
-                status: 'presente'
-            }));
+            // 1. Deduplicate locally first (keep newest)
+            const uniqueScansMap = offlineScans.reduce((acc, scan) => {
+                const key = `${scan.eventId}-${scan.costaleroId}`;
+                if (!acc[key] || new Date(scan.timestamp) > new Date(acc[key].timestamp)) {
+                    acc[key] = scan;
+                }
+                return acc;
+            }, {});
+            const uniqueScans = Object.values(uniqueScansMap);
 
-            const { error } = await supabase
+            // 2. Fetch already existing records in DB to avoid double insertion error or duplicates
+            const eventIds = [...new Set(uniqueScans.map(s => s.eventId))];
+            const costaleroIds = [...new Set(uniqueScans.map(s => s.costaleroId))];
+
+            const { data: existingRecords } = await supabase
                 .from('asistencias')
-                .insert(recordsToInsert);
+                .select('event_id, costalero_id')
+                .in('event_id', eventIds)
+                .in('costalero_id', costaleroIds);
 
-            if (error) {
-                console.error("Error syncing scans:", error);
-                return; // Don't clear if failed
+            const existingSet = new Set((existingRecords || []).map(r => `${r.event_id}-${r.costalero_id}`));
+
+            // 3. Only insert those that don't exist
+            const recordsToInsert = uniqueScans
+                .filter(scan => !existingSet.has(`${scan.eventId}-${scan.costaleroId}`))
+                .map(scan => ({
+                    event_id: scan.eventId,
+                    costalero_id: scan.costaleroId,
+                    nombreCostalero: scan.nombreCostalero,
+                    timestamp: scan.timestamp || new Date().toISOString(),
+                    status: 'presente'
+                }));
+
+            if (recordsToInsert.length > 0) {
+                const { error } = await supabase
+                    .from('asistencias')
+                    .insert(recordsToInsert);
+
+                if (error) {
+                    console.error("Error syncing scans:", error);
+                    return;
+                }
             }
 
             // Clear synced scans
@@ -85,8 +111,35 @@ export default function QRScannerScreen({ route, navigation }) {
         }
     };
 
-    const handleBarCodeScanned = async ({ data }) => {
+    const handleBarCodeScanned = async ({ data, bounds }) => {
         if (scanned) return;
+
+        // Validar que el código QR esté centrado (si bounds está disponible)
+        if (bounds) {
+            const { origin, size } = bounds;
+            // Obtener dimensiones de la pantalla aproximadas
+            // El área de escaneo es 250x250 centrado
+            // Si el código está muy descentrado, ignorarlo
+            const centerX = origin.x + size.width / 2;
+            const centerY = origin.y + size.height / 2;
+
+            // Estas son aproximaciones - ajustar según sea necesario
+            // En una pantalla típica, el centro está alrededor de (width/2, height/2)
+            // El área de escaneo de 250x250 está centrada
+            // Permitir un margen más amplio para facilitar el escaneo
+            const screenCenterX = 200; // Aproximado - ajustar según dispositivo
+            const screenCenterY = 400; // Aproximado - ajustar según dispositivo
+            const tolerance = 200; // Margen de tolerancia en píxeles (aumentado para facilitar)
+
+            const isWithinBounds =
+                Math.abs(centerX - screenCenterX) < tolerance &&
+                Math.abs(centerY - screenCenterY) < tolerance;
+
+            if (!isWithinBounds) {
+                // QR detectado pero fuera del área - ignorar
+                return;
+            }
+        }
 
         setScanned(true);
         setLoading(true);

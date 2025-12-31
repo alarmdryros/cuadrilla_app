@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, LayoutAnimation, Platform, UIManager, Animated } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
 
 export default function RelayManagementScreen({ route, navigation }) {
@@ -17,10 +18,30 @@ export default function RelayManagementScreen({ route, navigation }) {
     const [currentRelayPoint, setCurrentRelayPoint] = useState(null);
     const [newPointModalVisible, setNewPointModalVisible] = useState(false);
     const [newPointName, setNewPointName] = useState('');
+    const [editingPoint, setEditingPoint] = useState(null);
+    const [editPointName, setEditPointName] = useState('');
 
     // Swap State
     const [swappingRelevo, setSwappingRelevo] = useState(null);
+    const scaleAnim = useRef(new Animated.Value(1)).current;
 
+    useEffect(() => {
+        if (swappingRelevo) {
+            Animated.spring(scaleAnim, {
+                toValue: 1.05,
+                useNativeDriver: true,
+                friction: 4,
+                tension: 40
+            }).start();
+        } else {
+            Animated.spring(scaleAnim, {
+                toValue: 1,
+                useNativeDriver: true,
+                friction: 4,
+                tension: 40
+            }).start();
+        }
+    }, [swappingRelevo]);
     // Definir estructura de posiciones por trabajadera
     const getPositions = (trabajadera) => {
         if (trabajadera === 1 || trabajadera === 7) {
@@ -45,10 +66,20 @@ export default function RelayManagementScreen({ route, navigation }) {
 
     const fetchAllData = async () => {
         try {
-            // 1. Costaleros
+            // 1. Get Event Details to know the year
+            const { data: eventData, error: eventError } = await supabase
+                .from('eventos')
+                .select('año')
+                .eq('id', eventId)
+                .single();
+
+            if (eventError) throw eventError;
+
+            // 2. Costaleros (filtered by year)
             const { data: costalerosData, error: costError } = await supabase
                 .from('costaleros')
-                .select('*');
+                .select('*')
+                .eq('año', eventData.año || 2024);
             if (costError) throw costError;
             setAllCostaleros(costalerosData || []);
 
@@ -82,6 +113,8 @@ export default function RelayManagementScreen({ route, navigation }) {
                 relayPointId: r.relay_point_id,
                 nombreCostalero: r.nombre_costalero
             }));
+
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
             setRelevos(mappedRelevos);
 
         } catch (error) {
@@ -124,6 +157,69 @@ export default function RelayManagementScreen({ route, navigation }) {
         } catch (error) {
             Alert.alert('Error', error.message);
         }
+    };
+
+    const updateRelayPoint = async () => {
+        if (!editPointName.trim() || !editingPoint) return;
+        try {
+            const { error } = await supabase
+                .from('relay_points')
+                .update({ name: editPointName })
+                .eq('id', editingPoint.id);
+
+            if (error) throw error;
+
+            setEditingPoint(null);
+            setEditPointName('');
+            await fetchAllData();
+        } catch (error) {
+            Alert.alert('Error', error.message);
+        }
+    };
+
+    const deleteRelayPoint = async () => {
+        if (!editingPoint) return;
+
+        Alert.alert(
+            'Eliminar Punto de Relevo',
+            `¿Estás seguro de eliminar "${editingPoint.name}"? Se eliminarán todos los relevos asociados.`,
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                {
+                    text: 'Eliminar',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            // First delete all relevos associated with this point
+                            await supabase
+                                .from('relevos')
+                                .delete()
+                                .eq('relay_point_id', editingPoint.id);
+
+                            // Then delete the point itself
+                            const { error } = await supabase
+                                .from('relay_points')
+                                .delete()
+                                .eq('id', editingPoint.id);
+
+                            if (error) throw error;
+
+                            setEditingPoint(null);
+                            setEditPointName('');
+
+                            // If we're deleting the current point, clear it
+                            if (currentRelayPoint?.id === editingPoint.id) {
+                                setCurrentRelayPoint(null);
+                            }
+
+                            await fetchAllData();
+                        } catch (error) {
+                            Alert.alert('Error', error.message);
+                        }
+                    }
+                }
+            ]
+        );
     };
 
     const assignPosition = async (trabajadera, position, costaleroId) => {
@@ -300,56 +396,63 @@ export default function RelayManagementScreen({ route, navigation }) {
         const suplementoText = assignedCostaleroData?.suplemento ? ` • ${assignedCostaleroData.suplemento} cm` : '';
 
         return (
-            <TouchableOpacity
-                key={position}
+            <Animated.View
                 style={[
-                    styles.positionCard,
-                    assigned && styles.positionCardFilled,
+                    styles.positionCardContainer,
                     isCorriente && styles.positionCardCorriente,
-                    isSelectedForSwap && styles.positionCardSelected
+                    isSelectedForSwap && { transform: [{ scale: scaleAnim }] }
                 ]}
-                onPress={() => {
-                    if (assigned) {
-                        // Toggle selection for swap
-                        if (swappingRelevo) {
-                            if (swappingRelevo.id === assigned.id) {
-                                setSwappingRelevo(null); // Deselect if tapping same
+                key={position}
+            >
+                <TouchableOpacity
+                    style={[
+                        styles.positionCard,
+                        assigned && styles.positionCardFilled,
+                        isSelectedForSwap && styles.positionCardSelected
+                    ]}
+                    onPress={() => {
+                        if (assigned) {
+                            // Toggle selection for swap
+                            if (swappingRelevo) {
+                                if (swappingRelevo.id === assigned.id) {
+                                    setSwappingRelevo(null); // Deselect if tapping same
+                                } else {
+                                    // Direct Swap Interaction
+                                    handleDirectSwap(swappingRelevo, assigned);
+                                }
                             } else {
-                                // Direct Swap Interaction
-                                handleDirectSwap(swappingRelevo, assigned);
+                                setSwappingRelevo(assigned);
                             }
                         } else {
-                            setSwappingRelevo(assigned);
+                            // Empty Slot Logic
+                            if (swappingRelevo) {
+                                // Move selected costalero to this empty slot
+                                handleMoveToEmpty(swappingRelevo, trabajadera, position);
+                            } else {
+                                // Standard assign logic
+                                setSelectedPosition({ trabajadera, position });
+                                setShowAllTrabajaderas(false);
+                                setModalVisible(true);
+                                setSwappingRelevo(null); // Ensure clean state
+                            }
                         }
-                    } else {
-                        // Empty Slot Logic
-                        if (swappingRelevo) {
-                            // Move selected costalero to this empty slot
-                            handleMoveToEmpty(swappingRelevo, trabajadera, position);
-                        } else {
-                            // Standard assign logic
-                            setSelectedPosition({ trabajadera, position });
-                            setShowAllTrabajaderas(false);
-                            setModalVisible(true);
-                            setSwappingRelevo(null); // Ensure clean state
-                        }
-                    }
-                }}
-                onLongPress={() => {
-                    if (assigned) removeFromPosition(assigned.id);
-                }}
-                delayLongPress={500}
-            >
-                <Text style={styles.positionLabel}>
-                    {getPositionLabel(position)}
-                    {suplementoText}
-                </Text>
-                {assigned ? (
-                    <Text style={styles.positionName}>{assigned.nombreCostalero}</Text>
-                ) : (
-                    <Text style={styles.positionEmpty}>Vacío</Text>
-                )}
-            </TouchableOpacity>
+                    }}
+                    onLongPress={() => {
+                        if (assigned) removeFromPosition(assigned.id);
+                    }}
+                    delayLongPress={500}
+                >
+                    <Text style={styles.positionLabel}>
+                        {getPositionLabel(position)}
+                        {suplementoText}
+                    </Text>
+                    {assigned ? (
+                        <Text style={styles.positionName}>{assigned.nombreCostalero}</Text>
+                    ) : (
+                        <Text style={styles.positionEmpty}>Vacío</Text>
+                    )}
+                </TouchableOpacity>
+            </Animated.View>
         );
     };
 
@@ -454,6 +557,11 @@ export default function RelayManagementScreen({ route, navigation }) {
                             currentRelayPoint?.id === point.id && styles.pointTabActive
                         ]}
                         onPress={() => setCurrentRelayPoint(point)}
+                        onLongPress={() => {
+                            setEditingPoint(point);
+                            setEditPointName(point.name);
+                        }}
+                        delayLongPress={500}
                     >
                         <Text style={[
                             styles.pointTabText,
@@ -492,7 +600,7 @@ export default function RelayManagementScreen({ route, navigation }) {
                         </Text>
                     </View>
 
-                    <ScrollView style={styles.scrollView}>
+                    <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingBottom: 200 }}>
                         {[1, 2, 3, 4, 5, 6, 7].map(t => renderTrabajaderaSection(t))}
                     </ScrollView>
                 </>
@@ -520,16 +628,71 @@ export default function RelayManagementScreen({ route, navigation }) {
 
                         <View style={styles.modalActions}>
                             <TouchableOpacity
-                                style={[styles.actionBtn, { backgroundColor: '#BDBDBD' }]}
-                                onPress={() => setNewPointModalVisible(false)}
-                            >
-                                <Text style={styles.btnText}>Cancelar</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.actionBtn, { backgroundColor: '#5E35B1' }]}
+                                style={[styles.modernBtn, styles.saveBtn]}
                                 onPress={createRelayPoint}
                             >
-                                <Text style={styles.btnText}>Crear</Text>
+                                <MaterialIcons name="add-circle-outline" size={20} color="white" />
+                                <Text style={styles.modernBtnText}>Crear Punto</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.modernBtn, styles.cancelBtn]}
+                                onPress={() => setNewPointModalVisible(false)}
+                            >
+                                <Text style={styles.cancelBtnText}>Cancelar</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Modal Editar/Eliminar Punto Relevo */}
+            <Modal
+                visible={editingPoint !== null}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => {
+                    setEditingPoint(null);
+                    setEditPointName('');
+                }}
+            >
+                <View style={styles.modalContainer}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Editar Punto de Relevo</Text>
+                        <Text style={styles.modalSubtitle}>Edita el nombre o elimina el punto</Text>
+
+                        <TextInput
+                            style={styles.input}
+                            placeholder="Nombre del punto"
+                            value={editPointName}
+                            onChangeText={setEditPointName}
+                            autoFocus
+                        />
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.modernBtn, styles.saveBtn]}
+                                onPress={updateRelayPoint}
+                            >
+                                <MaterialIcons name="check-circle" size={20} color="white" />
+                                <Text style={styles.modernBtnText}>Guardar Cambios</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.modernBtn, styles.deleteBtn]}
+                                onPress={deleteRelayPoint}
+                            >
+                                <MaterialIcons name="delete-outline" size={20} color="white" />
+                                <Text style={styles.modernBtnText}>Eliminar Punto</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.modernBtn, styles.cancelBtn]}
+                                onPress={() => {
+                                    setEditingPoint(null);
+                                    setEditPointName('');
+                                }}
+                            >
+                                <Text style={styles.cancelBtnText}>Cancelar</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -748,14 +911,17 @@ const styles = StyleSheet.create({
     },
 
     // --- Position Card ---
-    positionCard: {
+    positionCardContainer: {
         width: '48%',
+        marginBottom: 10,
+    },
+    positionCard: {
+        width: '100%',
         backgroundColor: '#F9FAFB',
         padding: 12,
         borderRadius: 12,
         borderWidth: 1.5,
         borderColor: '#E5E7EB',
-        marginBottom: 10,
         borderStyle: 'dashed', // Dashed for empty
         minHeight: 70,
         justifyContent: 'center'
@@ -774,14 +940,14 @@ const styles = StyleSheet.create({
         width: '60%'
     },
     positionCardSelected: {
-        borderColor: '#D4AF37', // Gold for selection
-        backgroundColor: '#FFFBEB',
+        borderColor: '#FFD700', // Gold vibrant
+        backgroundColor: '#FFF9C4', // Yellow light
         borderWidth: 2,
-        shadowColor: "#D4AF37",
+        shadowColor: "#FFD700",
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.3,
-        shadowRadius: 6,
-        elevation: 4
+        shadowOpacity: 0.8,
+        shadowRadius: 10,
+        elevation: 8,
     },
 
     // Typography in Card
@@ -883,14 +1049,16 @@ const styles = StyleSheet.create({
     modalContainer: {
         flex: 1,
         backgroundColor: 'rgba(0,0,0,0.5)',
-        justifyContent: 'flex-end'
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20
     },
     modalContent: {
         backgroundColor: 'white',
-        borderTopLeftRadius: 24,
-        borderTopRightRadius: 24,
+        borderRadius: 24,
         padding: 24,
-        maxHeight: '90%',
+        width: '100%',
+        maxHeight: '80%',
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 10 },
         shadowOpacity: 0.2,
@@ -919,9 +1087,47 @@ const styles = StyleSheet.create({
         color: '#111827'
     },
     modalActions: {
+        flexDirection: 'column',
+        gap: 12,
+        marginTop: 8
+    },
+    modernBtn: {
         flexDirection: 'row',
-        justifyContent: 'flex-end',
-        gap: 12
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        paddingHorizontal: 24,
+        borderRadius: 16,
+        gap: 8,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 4
+    },
+    saveBtn: {
+        backgroundColor: '#10B981',
+    },
+    deleteBtn: {
+        backgroundColor: '#EF4444',
+    },
+    cancelBtn: {
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        borderColor: '#E5E7EB',
+        shadowOpacity: 0,
+        elevation: 0
+    },
+    modernBtnText: {
+        color: 'white',
+        fontWeight: '700',
+        fontSize: 16,
+        letterSpacing: 0.3
+    },
+    cancelBtnText: {
+        color: '#6B7280',
+        fontWeight: '600',
+        fontSize: 16
     },
     actionBtn: {
         paddingVertical: 12,

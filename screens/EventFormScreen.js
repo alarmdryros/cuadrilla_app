@@ -2,10 +2,13 @@ import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet, ScrollView, Alert, TouchableOpacity, Platform } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../supabaseConfig';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons } from '../components/Icon';
+import { useSeason } from '../contexts/SeasonContext';
+import { NotificationService } from '../services/NotificationService';
 
 export default function EventFormScreen({ navigation, route }) {
     const { eventData } = route.params || {};
+    const { currentYear } = useSeason();
 
     const [nombre, setNombre] = useState(eventData?.nombre || '');
     const [lugar, setLugar] = useState(eventData?.lugar || '');
@@ -27,6 +30,7 @@ export default function EventFormScreen({ navigation, route }) {
             headerShadowVisible: false,
         });
     }, [navigation, eventData]);
+
 
     const onDateChange = (event, selectedDate, setter, currentVal) => {
         if (event.type === 'dismissed') return;
@@ -56,6 +60,7 @@ export default function EventFormScreen({ navigation, route }) {
                 fechaInicio: fechaInicio.toISOString(),
                 fechaFin: fechaFin.toISOString(),
                 fecha: fechaInicio.toISOString(), // Legacy support
+                año: fechaInicio.getFullYear(),
                 updatedAt: new Date().toISOString()
             };
 
@@ -67,6 +72,10 @@ export default function EventFormScreen({ navigation, route }) {
 
                 if (error) throw error;
                 Alert.alert("✅ Actualizado", "Evento modificado correctamente");
+
+                // Reschedule notifications (cancel old logic and set new)
+                await NotificationService.cancelEventReminders(eventData.id);
+                NotificationService.scheduleEventReminder(eventData.id, nombre, fechaInicio);
             } else {
                 dataToSave.createdAt = new Date().toISOString();
                 const { error } = await supabase
@@ -75,6 +84,19 @@ export default function EventFormScreen({ navigation, route }) {
 
                 if (error) throw error;
                 Alert.alert("✅ Creado", "Evento creado correctamente");
+
+                // Schedule notifications for new event
+                // Need to get the ID if it's a new insert
+                const { data: newEvent } = await supabase
+                    .from('eventos')
+                    .select('id')
+                    .eq('nombre', nombre)
+                    .eq('fechaInicio', fechaInicio.toISOString())
+                    .single();
+
+                if (newEvent) {
+                    NotificationService.scheduleEventReminder(newEvent.id, nombre, fechaInicio);
+                }
             }
             navigation.goBack();
         } catch (e) {

@@ -14,3 +14,16 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
         detectSessionInUrl: false,
     },
 });
+
+// Helper function to clear corrupted auth data
+export const clearAuthStorage = async () => {
+    try {
+        const keys = await AsyncStorage.getAllKeys();
+        const authKeys = keys.filter(key => key.includes('supabase.auth.token'));
+        if (authKeys.length > 0) {
+            await AsyncStorage.multiRemove(authKeys);
+        }
+    } catch (error) {
+        console.error('Error clearing auth storage:', error);
+    }
+};

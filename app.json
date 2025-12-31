@@ -2,7 +2,8 @@
   "expo": {
     "name": "cuadrilla_app",
     "slug": "cuadrilla_app",
-    "version": "2.0.0",
+    "scheme": "cuadrillaapp",
+    "version": "2.2.5",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -16,7 +17,17 @@
       "supportsTablet": true
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "Cuadrilla App",
+      "shortName": "Cuadrilla",
+      "display": "standalone",
+      "backgroundColor": "#ffffff",
+      "themeColor": "#1a5d1a",
+      "orientation": "portrait",
+      "meta": {
+        "apple-mobile-web-app-capable": "yes",
+        "apple-mobile-web-app-status-bar-style": "black-translucent"
+      }
     },
     "plugins": [
       [
@@ -28,6 +39,7 @@
     ],
     "android": {
       "package": "com.zapedevil.cuadrilla_app",
+      "versionCode": 7,
       "permissions": [
         "CAMERA",
         "android.permission.CAMERA",

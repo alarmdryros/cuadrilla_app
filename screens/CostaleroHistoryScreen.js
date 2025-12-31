@@ -1,31 +1,65 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { supabase } from '../supabaseConfig';
+import { useSeason } from '../contexts/SeasonContext';
 
 export default function CostaleroHistoryScreen({ route, navigation }) {
-    const { costaleroId, costaleroName } = route.params;
+    const { costaleroId, costaleroName: initialName } = route.params || {};
+    const { selectedYear } = useSeason();
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [name, setName] = useState(initialName || '');
 
     useEffect(() => {
-        navigation.setOptions({ title: `Historial: ${costaleroName}` });
+        navigation.setOptions({
+            title: `Año ${selectedYear}`,
+            headerTitleAlign: 'center'
+        });
 
         const fetchHistory = async () => {
             try {
-                // Efficient relational query
+                setLoading(true);
+                // 1. Obtener el email del costalero actual para buscar su histórico global
+                const { data: currentCostalero } = await supabase
+                    .from('costaleros')
+                    .select('nombre, apellidos, email')
+                    .eq('id', costaleroId)
+                    .single();
+
+                if (currentCostalero) {
+                    if (!name) {
+                        const fullName = `${currentCostalero.nombre} ${currentCostalero.apellidos}`;
+                        setName(fullName);
+                    }
+                }
+
+                if (!currentCostalero?.email) {
+                    throw new Error("No se encontró el email del costalero para consultar el historial global.");
+                }
+
+                // 2. Buscar todas las asistencias vinculadas a costaleros con ese email (en cualquier año)
+                const { data: allCostaleroIds } = await supabase
+                    .from('costaleros')
+                    .select('id')
+                    .eq('email', currentCostalero.email);
+
+                const ids = allCostaleroIds.map(c => c.id);
+
                 const { data, error } = await supabase
                     .from('asistencias')
                     .select(`
-                        id,
-                        status,
-                        timestamp,
-                        eventos (
                             id,
-                            nombre,
-                            fecha
-                        )
-                    `)
-                    .eq('costalero_id', costaleroId)
+                            status,
+                            timestamp,
+                            eventos!inner (
+                                id,
+                                nombre,
+                                fecha,
+                                año
+                            )
+                        `)
+                    .in('costalero_id', ids)
+                    .eq('eventos.año', selectedYear)
                     .order('timestamp', { ascending: false });
 
                 if (error) throw error;
@@ -35,6 +69,7 @@ export default function CostaleroHistoryScreen({ route, navigation }) {
                     id: item.id,
                     eventName: item.eventos?.nombre || 'Evento desconocido',
                     eventDate: item.eventos?.fecha,
+                    eventYear: item.eventos?.año,
                     timestamp: item.timestamp,
                     status: item.status
                 }));
@@ -50,12 +85,17 @@ export default function CostaleroHistoryScreen({ route, navigation }) {
         };
 
         fetchHistory();
-    }, [costaleroId]);
+    }, [costaleroId, initialName, navigation, selectedYear, name]);
 
     const renderItem = ({ item }) => (
         <View style={[styles.item, getStatusStyle(item.status)]}>
-            <Text style={styles.eventName}>{item.eventName}</Text>
-            <Text style={styles.date}>📅 {new Date(item.eventDate || item.timestamp?.toDate()).toLocaleDateString()}</Text>
+            <View style={styles.eventInfo}>
+                <Text style={styles.eventName}>{item.eventName}</Text>
+                <Text style={styles.eventDate}>
+                    {item.eventYear ? `[${item.eventYear}] ` : ''}
+                    {new Date(item.eventDate).toLocaleDateString()}
+                </Text>
+            </View>
             <Text style={styles.status}>{getStatusText(item.status)}</Text>
         </View>
     );
@@ -86,7 +126,7 @@ export default function CostaleroHistoryScreen({ route, navigation }) {
                 data={history}
                 keyExtractor={item => item.id}
                 renderItem={renderItem}
-                contentContainerStyle={{ paddingTop: 20, paddingBottom: 20 }}
+                contentContainerStyle={{ paddingTop: 20, paddingBottom: 100 }}
                 ListEmptyComponent={<Text style={styles.empty}>No hay registros de asistencia.</Text>}
             />
         </View>

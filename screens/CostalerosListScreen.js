@@ -2,8 +2,12 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, SectionList, TouchableOpacity, StyleSheet, ActivityIndicator, TextInput, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../supabaseConfig';
+import { useSeason } from '../contexts/SeasonContext';
+
+import { normalizeString } from '../utils/stringUtils';
 
 export default function CostalerosListScreen({ navigation }) {
+    const { selectedYear } = useSeason();
     const [sections, setSections] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
@@ -15,6 +19,7 @@ export default function CostalerosListScreen({ navigation }) {
             const { data, error } = await supabase
                 .from('costaleros')
                 .select('*')
+                .eq('año', selectedYear)
                 .order('apellidos', { ascending: true });
 
             if (error) throw error;
@@ -29,15 +34,19 @@ export default function CostalerosListScreen({ navigation }) {
 
     useFocusEffect(
         useCallback(() => {
+            navigation.setOptions({
+                title: 'Cuadrilla',
+                headerTitleAlign: 'center'
+            });
             fetchCostaleros();
-        }, [])
+        }, [selectedYear, navigation])
     );
 
     useEffect(() => {
-        // Filter costaleros based on search query
+        const query = normalizeString(searchQuery);
         const filtered = allCostaleros.filter(c => {
-            const fullName = `${c.nombre} ${c.apellidos}`.toLowerCase();
-            return fullName.includes(searchQuery.toLowerCase());
+            const fullName = normalizeString(`${c.nombre} ${c.apellidos}`);
+            return fullName.includes(query);
         });
         organizeSections(filtered);
     }, [allCostaleros, searchQuery]);
@@ -98,6 +107,11 @@ export default function CostalerosListScreen({ navigation }) {
 
     return (
         <View style={styles.container}>
+            <View style={styles.statsHeader}>
+                <Text style={styles.statsTitle}>CUADRILLA {selectedYear}</Text>
+                <Text style={styles.statsCount}>{allCostaleros.length} costaleros registrados</Text>
+            </View>
+
             <View style={styles.searchContainer}>
                 <TextInput
                     style={styles.searchInput}
@@ -117,6 +131,7 @@ export default function CostalerosListScreen({ navigation }) {
                     keyExtractor={(item, index) => item.id + index}
                     renderItem={renderItem}
                     renderSectionHeader={renderSectionHeader}
+                    contentContainerStyle={{ paddingBottom: 100 }}
                     ListEmptyComponent={<Text style={styles.emptyText}>No se encontraron costaleros.</Text>}
                 />
             )}
@@ -135,6 +150,25 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#FAFAFA'
+    },
+    statsHeader: {
+        backgroundColor: 'white',
+        paddingVertical: 16,
+        alignItems: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5',
+    },
+    statsTitle: {
+        fontSize: 18,
+        fontWeight: '800',
+        color: '#5E35B1',
+        letterSpacing: 1
+    },
+    statsCount: {
+        fontSize: 14,
+        color: '#757575',
+        marginTop: 4,
+        fontWeight: '500'
     },
     searchContainer: {
         backgroundColor: 'white',

@@ -1,29 +1,56 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, Button, ActivityIndicator, TouchableOpacity, Alert, ScrollView, Linking } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, FlatList, Button, ActivityIndicator, TouchableOpacity, Alert, ScrollView, Linking, Modal, TextInput } from 'react-native';
+import { MaterialIcons } from '../components/Icon';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../supabaseConfig';
 
+import { useAuth } from '../contexts/AuthContext';
+import { useNotifications } from '../contexts/NotificationContext';
+
 export default function EventDetailScreen({ route, navigation }) {
+    const { userRole, userProfile } = useAuth();
     const { eventId } = route.params || {};
+
+    const isManagement = userRole === 'admin' || userRole === 'capataz';
+
     const [event, setEvent] = useState(null);
     const [asistencias, setAsistencias] = useState([]);
     const [allCostaleros, setAllCostaleros] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [tab, setTab] = useState('presentes');
     const [isEventFinished, setIsEventFinished] = useState(false);
+
+    // Notifications specific
+    const { sendAbsenceNotification } = useNotifications();
+    const [absenceModalVisible, setAbsenceModalVisible] = useState(false);
+    const [motivo, setMotivo] = useState('');
+    const [sendingNotification, setSendingNotification] = useState(false);
+    const [managementModalVisible, setManagementModalVisible] = useState(false);
+    const [selectedCostalero, setSelectedCostalero] = useState(null);
 
     // Edit/Delete Header Buttons
     React.useLayoutEffect(() => {
-        navigation.setOptions({
-            headerRight: () => (
-                <View style={{ flexDirection: 'row' }}>
-                    <Button title="✏️" onPress={handleEdit} color="#5E35B1" />
-                    <View style={{ width: 10 }} />
-                    <Button title="🗑️" onPress={handleDelete} color="#F44336" />
-                </View>
-            ),
-        });
-    }, [navigation, event]);
+        if (isManagement) {
+            navigation.setOptions({
+                headerRight: () => (
+                    <View style={{ flexDirection: 'row' }}>
+                        <Button title="✏️" onPress={handleEdit} color="#5E35B1" />
+                        <View style={{ width: 10 }} />
+                        <Button title="🗑️" onPress={handleDelete} color="#F44336" />
+                    </View>
+                ),
+            });
+        } else if (userRole === 'costalero') {
+            navigation.setOptions({
+                headerRight: () => (
+                    <TouchableOpacity onPress={() => setAbsenceModalVisible(true)}>
+                        <MaterialIcons name="person-off" size={24} color="#D32F2F" />
+                    </TouchableOpacity>
+                ),
+            });
+        } else {
+            navigation.setOptions({ headerRight: null });
+        }
+    }, [navigation, event, userRole]);
 
     const handleEdit = () => {
         if (!event) return;
@@ -89,10 +116,11 @@ export default function EventDetailScreen({ route, navigation }) {
                 }
             }
 
-            // 2. Get All Costaleros
+            // 2. Get All Costaleros (filtered by event's year to avoid duplicates from other seasons)
             const { data: costalerosData, error: costalerosError } = await supabase
                 .from('costaleros')
                 .select('*')
+                .eq('año', eventData.año)
                 .order('apellidos');
 
             if (costalerosError) throw costalerosError;
@@ -106,7 +134,38 @@ export default function EventDetailScreen({ route, navigation }) {
                 .order('timestamp', { ascending: false });
 
             if (asisError) throw asisError;
-            setAsistencias(asisData || []);
+
+            // Deduplicate: If there are multiple records for the same costalero, keep the most recent one
+            const uniqueAsisMap = (asisData || []).reduce((acc, a) => {
+                const cId = a.costalero_id || a.costaleroId;
+                if (!acc[cId] || new Date(a.timestamp) > new Date(acc[cId].timestamp)) {
+                    acc[cId] = a;
+                }
+                return acc;
+            }, {});
+            const uniqueAsisData = Object.values(uniqueAsisMap);
+
+            // Enrich and sort asistencias
+            const costaleroMap = (costalerosData || []).reduce((acc, c) => {
+                acc[c.id] = c;
+                return acc;
+            }, {});
+
+            const processedAsistencias = uniqueAsisData.map(a => {
+                const costalero = costaleroMap[a.costalero_id || a.costaleroId];
+                return {
+                    ...a,
+                    trabajadera: costalero ? costalero.trabajadera : null,
+                    apellidos: costalero ? costalero.apellidos : ''
+                };
+            }).sort((a, b) => {
+                const tA = a.trabajadera ? parseInt(a.trabajadera) : 999;
+                const tB = b.trabajadera ? parseInt(b.trabajadera) : 999;
+                if (tA !== tB) return tA - tB;
+                return (a.nombreCostalero || '').localeCompare(b.nombreCostalero || '');
+            });
+
+            setAsistencias(processedAsistencias);
 
         } catch (error) {
             console.error(error);
@@ -247,24 +306,13 @@ export default function EventDetailScreen({ route, navigation }) {
 
     // Funciones Manuales
     const handleManualAction = (costalero) => {
-        Alert.alert(
-            "Gestionar Ausencia",
-            `¿Qué deseas hacer con ${costalero.nombre} ${costalero.apellidos}?`,
-            [
-                { text: "Cancelar", style: "cancel" },
-                {
-                    text: "📝 Justificar",
-                    onPress: () => addAsistencia(costalero, 'justificado')
-                },
-                {
-                    text: "✅ Marcar Presente",
-                    onPress: () => addAsistencia(costalero, 'presente')
-                }
-            ]
-        );
+        if (!isManagement) return;
+        setSelectedCostalero(costalero);
+        setManagementModalVisible(true);
     };
 
     const deleteAsistencia = async (attendanceId) => {
+        if (!isManagement) return;
         try {
             const { error } = await supabase
                 .from('asistencias')
@@ -280,6 +328,7 @@ export default function EventDetailScreen({ route, navigation }) {
     };
 
     const addAsistencia = async (costalero, status) => {
+        if (!isManagement) return;
         try {
             // Check if already registered
             const { data: existing, error: fetchError } = await supabase
@@ -306,7 +355,7 @@ export default function EventDetailScreen({ route, navigation }) {
                     costalero_id: costalero.id,
                     nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
                     timestamp: new Date().toISOString(),
-                    status: status // 'presente' | 'justificado'
+                    status: status // 'presente' | 'justificado' | 'ausente'
                 }]);
 
             if (insertError) throw insertError;
@@ -318,6 +367,7 @@ export default function EventDetailScreen({ route, navigation }) {
     };
 
     const handleExistingAction = (item) => {
+        if (!isManagement) return;
         Alert.alert(
             "Gestionar Asistencia",
             `${item.nombreCostalero}`,
@@ -332,33 +382,63 @@ export default function EventDetailScreen({ route, navigation }) {
         );
     };
 
-    const renderAsistente = ({ item }) => (
-        <TouchableOpacity
-            style={[styles.item, item.status === 'justificado' ? styles.justificadoItem : null]}
-            onPress={() => handleExistingAction(item)}
-        >
-            <View>
-                <Text style={styles.name}>{item.nombreCostalero}</Text>
-                <Text style={styles.time}>
-                    {item.status === 'justificado' ? '📝 FALTA JUSTIFICADA' : `🕒 ${item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : ''}`}
-                </Text>
-            </View>
-            <Text style={styles.arrow}>⋮</Text>
-        </TouchableOpacity>
-    );
+    const getBadgeStyles = (status) => {
+        switch (status) {
+            case 'presente': return { bg: '#E8F5E9', border: '#4CAF50', text: '#2E7D32' };
+            case 'justificado': return { bg: '#FFF3E0', border: '#FF9800', text: '#EF6C00' };
+            default: return { bg: '#FFEBEE', border: '#F44336', text: '#C62828' }; // ausente or default
+        }
+    };
 
-    const renderAusente = ({ item }) => (
-        <TouchableOpacity style={styles.item} onPress={() => handleManualAction(item)}>
-            <View>
-                <Text style={styles.name}>
-                    {item.apellidos}, {item.nombre}
-                    {item.trabajadera ? <Text style={{ color: '#5E35B1', fontWeight: 'bold' }}> (T{item.trabajadera})</Text> : ''}
-                </Text>
-                <Text style={styles.time}>❌ Ausente - Toca para gestionar</Text>
-            </View>
-            <Text style={styles.arrow}>⋮</Text>
-        </TouchableOpacity>
-    );
+    const renderAsistente = ({ item }) => {
+        const { bg, border, text } = getBadgeStyles(item.status);
+        return (
+            <TouchableOpacity
+                style={[
+                    styles.item,
+                    item.status === 'justificado' ? styles.justificadoItem :
+                        item.status === 'presente' ? styles.presenteItem :
+                            item.status === 'ausente' ? styles.ausenteItem : null
+                ]}
+                onPress={() => handleExistingAction(item)}
+            >
+                <View style={{ flex: 1 }}>
+                    <View style={styles.nameRow}>
+                        <Text style={styles.name}>{item.nombreCostalero}</Text>
+                        {item.trabajadera && (
+                            <View style={[styles.badge, { backgroundColor: bg, borderColor: border }]}>
+                                <Text style={[styles.badgeText, { color: text }]}>T{item.trabajadera}</Text>
+                            </View>
+                        )}
+                    </View>
+                    <Text style={styles.time}>
+                        {item.status === 'justificado' ? '📝 FALTA JUSTIFICADA' : `🕒 ${item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`}
+                    </Text>
+                </View>
+                <Text style={styles.arrow}>⋮</Text>
+            </TouchableOpacity>
+        );
+    };
+
+    const renderAusente = ({ item }) => {
+        const { bg, border, text } = getBadgeStyles('ausente');
+        return (
+            <TouchableOpacity style={styles.item} onPress={() => handleManualAction(item)}>
+                <View style={{ flex: 1 }}>
+                    <View style={styles.nameRow}>
+                        <Text style={styles.name}>{item.apellidos}, {item.nombre}</Text>
+                        {item.trabajadera && (
+                            <View style={[styles.badge, { backgroundColor: bg, borderColor: border }]}>
+                                <Text style={[styles.badgeText, { color: text }]}>T{item.trabajadera}</Text>
+                            </View>
+                        )}
+                    </View>
+                    <Text style={styles.time}>⏳ Pendiente - Toca para gestionar</Text>
+                </View>
+                <Text style={styles.arrow}>⋮</Text>
+            </TouchableOpacity>
+        );
+    };
 
     if (loading && !event) return <ActivityIndicator style={styles.center} />;
 
@@ -366,6 +446,11 @@ export default function EventDetailScreen({ route, navigation }) {
         <View style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.eventTitle}>{event?.nombre}</Text>
+                {event?.fecha && (
+                    <Text style={styles.eventDate}>
+                        {new Date(event.fecha).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                )}
                 <View style={styles.statsRow}>
                     <View style={styles.statBox}>
                         <Text style={styles.statNumber}>{asistencias.filter(a => a.status === 'presente').length}</Text>
@@ -381,69 +466,215 @@ export default function EventDetailScreen({ route, navigation }) {
                     </View>
                 </View>
 
-                {isEventFinished && ausentesList.length > 0 && (
-                    <View style={{ marginBottom: 10 }}>
-                        <Text style={styles.warningText}>⚠️ Evento finalizado. Quedan {ausentesList.length} sin marcar.</Text>
-                        <Button title="CERRAR ACTA (Marcar Ausencias)" color="#F44336" onPress={handleCloseEvent} />
-                    </View>
+                {isManagement && (
+                    <>
+                        {isEventFinished && ausentesList.length > 0 && (
+                            <View style={{ marginBottom: 10 }}>
+                                <Text style={styles.warningText}>⚠️ Evento finalizado. Quedan {ausentesList.length} sin marcar.</Text>
+                                <Button title="CERRAR ACTA (Marcar Ausencias)" color="#F44336" onPress={handleCloseEvent} />
+                            </View>
+                        )}
+
+                        <Button
+                            title="📷 Escanear Nuevos"
+                            onPress={() => navigation.navigate('QRScanner', { eventId: eventId })}
+                        />
+                        <View style={{ marginTop: 10 }}>
+                            <Button
+                                title="📊 Ver por Trabajaderas"
+                                onPress={() => navigation.navigate('EventTrabajaderas', { eventId: eventId, eventName: event?.nombre })}
+                                color="#00BFA5"
+                            />
+                        </View>
+                        <View style={{ marginTop: 10 }}>
+                            <Button
+                                title="💬 Compartir por WhatsApp"
+                                onPress={shareEventWhatsApp}
+                                color="#25D366"
+                            />
+                        </View>
+                        <View style={{ marginTop: 10 }}>
+                            <Button
+                                title="🔄 Gestionar Relevos"
+                                onPress={() => navigation.navigate('RelayManagement', { eventId: eventId, eventName: event?.nombre })}
+                                color="#FF9800"
+                            />
+                        </View>
+                        <View style={{ marginTop: 10 }}>
+                            <Button
+                                title="📏 Mediciones (Antes/Después)"
+                                onPress={() => navigation.navigate('Measurements', { eventId: eventId, eventName: event?.nombre })}
+                                color="#673AB7"
+                            />
+                        </View>
+                    </>
                 )}
 
-                <Button
-                    title="📷 Escanear Nuevos"
-                    onPress={() => navigation.navigate('QRScanner', { eventId: eventId })}
-                />
-                <View style={{ marginTop: 10 }}>
-                    <Button
-                        title="📊 Ver por Trabajaderas"
-                        onPress={() => navigation.navigate('EventTrabajaderas', { eventId: eventId, eventName: event?.nombre })}
-                        color="#00BFA5"
-                    />
-                </View>
-                <View style={{ marginTop: 10 }}>
-                    <Button
-                        title="💬 Compartir por WhatsApp"
-                        onPress={shareEventWhatsApp}
-                        color="#25D366"
-                    />
-                </View>
-                <View style={{ marginTop: 10 }}>
-                    <Button
-                        title="🔄 Gestionar Relevos"
-                        onPress={() => navigation.navigate('RelayManagement', { eventId: eventId, eventName: event?.nombre })}
-                        color="#FF9800"
-                    />
-                </View>
-                <View style={{ marginTop: 10 }}>
-                    <Button
-                        title="📏 Mediciones (Antes/Después)"
-                        onPress={() => navigation.navigate('Measurements', { eventId: eventId, eventName: event?.nombre })}
-                        color="#673AB7"
-                    />
-                </View>
+                {!isManagement && userRole === 'costalero' && (
+                    <View style={{ marginTop: 20 }}>
+                        <TouchableOpacity
+                            style={styles.absenceButton}
+                            onPress={() => setAbsenceModalVisible(true)}
+                        >
+                            <MaterialIcons name="person-off" size={20} color="white" />
+                            <Text style={styles.absenceButtonText}>Avisar que no podré asistir</Text>
+                        </TouchableOpacity>
+                    </View>
+                )}
             </View>
 
-            <View style={styles.tabs}>
+            <View style={styles.navigationSection}>
+                <Text style={styles.sectionTitle}>Listas de Asistencia</Text>
+
                 <TouchableOpacity
-                    style={[styles.tab, tab === 'presentes' && styles.activeTab]}
-                    onPress={() => setTab('presentes')}
+                    style={styles.navButton}
+                    onPress={() => navigation.navigate('AttendeeList', { eventId: eventId, eventName: event?.nombre })}
                 >
-                    <Text style={[styles.tabText, tab === 'presentes' && styles.activeTabText]}>Asistentes ({asistencias.length})</Text>
+                    <View style={styles.navButtonContent}>
+                        <View>
+                            <Text style={styles.navButtonTitle}>👥 Ver Asistentes</Text>
+                            <Text style={styles.navButtonSubtitle}>{asistencias.length} registrados</Text>
+                        </View>
+                        <Text style={styles.navButtonArrow}>›</Text>
+                    </View>
                 </TouchableOpacity>
+
                 <TouchableOpacity
-                    style={[styles.tab, tab === 'ausentes' && styles.activeTab]}
-                    onPress={() => setTab('ausentes')}
+                    style={styles.navButton}
+                    onPress={() => navigation.navigate('PendingList', { eventId: eventId, eventName: event?.nombre })}
                 >
-                    <Text style={[styles.tabText, tab === 'ausentes' && styles.activeTabText]}>Pendientes ({ausentesList.length})</Text>
+                    <View style={styles.navButtonContent}>
+                        <View>
+                            <Text style={styles.navButtonTitle}>⏳ Ver Pendientes</Text>
+                            <Text style={styles.navButtonSubtitle}>{ausentesList.length} sin registrar</Text>
+                        </View>
+                        <Text style={styles.navButtonArrow}>›</Text>
+                    </View>
                 </TouchableOpacity>
             </View>
 
-            <FlatList
-                data={tab === 'presentes' ? asistencias : ausentesList}
-                renderItem={tab === 'presentes' ? renderAsistente : renderAusente}
-                keyExtractor={item => item.id}
-                contentContainerStyle={styles.list}
-                ListEmptyComponent={<Text style={styles.empty}>No hay costaleros en esta lista.</Text>}
-            />
+            {/* Modal de Aviso de Ausencia */}
+            <Modal
+                visible={absenceModalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setAbsenceModalVisible(false)}
+            >
+                <View style={styles.modalContainer}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Avisar Ausencia</Text>
+                        <Text style={styles.modalSubtitle}>Explica brevemente por qué no podrás asistir a este evento.</Text>
+
+                        <TextInput
+                            style={styles.textInput}
+                            placeholder="Ej: Motivos laborales, viaje, enfermedad..."
+                            multiline
+                            numberOfLines={4}
+                            value={motivo}
+                            onChangeText={setMotivo}
+                        />
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                style={[styles.actionBtn, { backgroundColor: '#BDBDBD' }]}
+                                onPress={() => setAbsenceModalVisible(false)}
+                            >
+                                <Text style={styles.btnText}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[styles.actionBtn, { backgroundColor: '#D32F2F' }]}
+                                onPress={async () => {
+                                    if (!motivo.trim()) {
+                                        Alert.alert("Motivo requerido", "Por favor, escribe el motivo de tu ausencia.");
+                                        return;
+                                    }
+                                    setSendingNotification(true);
+                                    try {
+                                        if (!userProfile?.costalero_id) {
+                                            Alert.alert("Error", "No tienes un perfil de costalero vinculado.");
+                                            return;
+                                        }
+                                        await sendAbsenceNotification(eventId, userProfile.costalero_id, event.nombre, motivo);
+                                        Alert.alert("Enviado", "Se ha notificado a los administradores su ausencia.");
+                                        setAbsenceModalVisible(false);
+                                        setMotivo('');
+                                    } catch (e) {
+                                        Alert.alert("Error", "No se pudo enviar el aviso.");
+                                    } finally {
+                                        setSendingNotification(false);
+                                    }
+                                }}
+                                disabled={sendingNotification}
+                            >
+                                {sendingNotification ? <ActivityIndicator color="white" /> : <Text style={styles.btnText}>Enviar Aviso</Text>}
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* Modal de Gestión de Asistencia (Admin) */}
+            <Modal
+                visible={managementModalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setManagementModalVisible(false)}
+            >
+                <View style={[styles.modalContainer, { zIndex: 1000 }]}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Gestionar Asistencia</Text>
+                        <Text style={styles.modalSubtitle}>
+                            {selectedCostalero?.nombre} {selectedCostalero?.apellidos}
+                        </Text>
+
+                        <TouchableOpacity
+                            style={[styles.manageBtn, { backgroundColor: '#4CAF50', marginBottom: 12 }]}
+                            onPress={() => {
+                                addAsistencia(selectedCostalero, 'presente');
+                                setManagementModalVisible(false);
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="check-circle" size={24} color="white" />
+                                <Text style={styles.btnText}>MARCAR PRESENTE</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.manageBtn, { backgroundColor: '#FF9800', marginBottom: 12 }]}
+                            onPress={() => {
+                                addAsistencia(selectedCostalero, 'justificado');
+                                setManagementModalVisible(false);
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="event-available" size={24} color="white" />
+                                <Text style={styles.btnText}>JUSTIFICAR FALTA</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.manageBtn, { backgroundColor: '#F44336', marginBottom: 24 }]}
+                            onPress={() => {
+                                addAsistencia(selectedCostalero, 'ausente');
+                                setManagementModalVisible(false);
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="cancel" size={24} color="white" />
+                                <Text style={styles.btnText}>MARCAR AUSENTE</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.manageBtn, { backgroundColor: '#BDBDBD' }]}
+                            onPress={() => setManagementModalVisible(false)}
+                        >
+                            <Text style={styles.btnText}>CANCELAR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
@@ -471,9 +702,16 @@ const styles = StyleSheet.create({
     eventTitle: {
         fontSize: 22,
         fontWeight: '700',
-        marginBottom: 16,
+        marginBottom: 8,
         textAlign: 'center',
         color: '#212121'
+    },
+    eventDate: {
+        fontSize: 16,
+        color: '#757575',
+        textAlign: 'center',
+        marginBottom: 16,
+        textTransform: 'capitalize'
     },
     statsRow: {
         flexDirection: 'row',
@@ -557,10 +795,37 @@ const styles = StyleSheet.create({
         borderLeftWidth: 4,
         borderLeftColor: '#FF9800'
     },
+    presenteItem: {
+        borderLeftWidth: 4,
+        borderLeftColor: '#4CAF50' // Green
+    },
+    ausenteItem: {
+        borderLeftWidth: 4,
+        borderLeftColor: '#F44336' // Red
+    },
+    nameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap'
+    },
+    badge: {
+        marginLeft: 8,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 12,
+        borderWidth: 1,
+        justifyContent: 'center',
+        alignItems: 'center'
+    },
+    badgeText: {
+        fontSize: 11,
+        fontWeight: 'bold'
+    },
     name: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#212121'
+        color: '#212121',
+        marginRight: 4
     },
     time: {
         color: '#757575',
@@ -576,5 +841,132 @@ const styles = StyleSheet.create({
         marginTop: 60,
         color: '#9E9E9E',
         fontSize: 16
+    },
+    navigationSection: {
+        padding: 16,
+        backgroundColor: '#FAFAFA'
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#212121',
+        marginBottom: 12,
+        paddingLeft: 4
+    },
+    navButton: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        marginBottom: 12,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 3
+    },
+    navButtonContent: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 18
+    },
+    navButtonTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#212121',
+        marginBottom: 4
+    },
+    navButtonSubtitle: {
+        fontSize: 13,
+        color: '#757575'
+    },
+    navButtonArrow: {
+        fontSize: 32,
+        color: '#BDBDBD',
+        fontWeight: '300'
+    },
+    absenceButton: {
+        backgroundColor: '#D32F2F',
+        borderRadius: 12,
+        padding: 16,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowColor: "#D32F2F",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4
+    },
+    absenceButtonText: {
+        color: 'white',
+        fontWeight: '700',
+        fontSize: 16,
+        marginLeft: 8
+    },
+    // --- Modal Styles ---
+    modalContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: 20
+    },
+    modalContent: {
+        backgroundColor: 'white',
+        borderRadius: 20,
+        padding: 24,
+        width: '100%',
+        maxWidth: 400
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#212121',
+        marginBottom: 8,
+        textAlign: 'center'
+    },
+    modalSubtitle: {
+        fontSize: 14,
+        color: '#757575',
+        marginBottom: 20,
+        textAlign: 'center'
+    },
+    textInput: {
+        backgroundColor: '#F5F5F5',
+        borderRadius: 12,
+        padding: 15,
+        fontSize: 16,
+        color: '#212121',
+        height: 100,
+        textAlignVertical: 'top',
+        marginBottom: 20
+    },
+    modalActions: {
+        flexDirection: 'row',
+        justifyContent: 'space-between'
+    },
+    actionBtn: {
+        flex: 1,
+        paddingVertical: 14,
+        borderRadius: 12,
+        marginHorizontal: 5,
+        alignItems: 'center'
+    },
+    btnText: {
+        color: 'white',
+        fontWeight: '700',
+        fontSize: 15
+    },
+    // Management Modal Specific Styles
+    manageBtn: {
+        width: '100%',
+        paddingVertical: 14,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    btnContent: {
+        flexDirection: 'row',
+        alignItems: 'center'
     }
 });

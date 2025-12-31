@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, Button, StyleSheet, ScrollView, Alert, ActivityIndicator, Linking, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, StyleSheet, ScrollView, Alert, ActivityIndicator, Linking, TouchableOpacity } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import QRCode from 'react-native-qrcode-svg';
+import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
+import { useSeason } from '../contexts/SeasonContext';
 
 export default function CostaleroFormScreen({ navigation, route }) {
-    const { costaleroId } = route.params || {};
+    const { costaleroId, readOnly } = route.params || {};
+    const { currentYear } = useSeason();
     const [loading, setLoading] = useState(false);
 
     // Form state
@@ -66,6 +69,13 @@ export default function CostaleroFormScreen({ navigation, route }) {
                     onPress: async () => {
                         setLoading(true);
                         try {
+                            if (email) {
+                                await supabase
+                                    .from('user_profiles')
+                                    .delete()
+                                    .eq('email', email.toLowerCase().trim());
+                            }
+
                             const { error } = await supabase
                                 .from('costaleros')
                                 .delete()
@@ -91,14 +101,19 @@ export default function CostaleroFormScreen({ navigation, route }) {
             return;
         }
 
+        if (email.trim()) {
+            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+            if (!emailRegex.test(email.trim())) {
+                Alert.alert("Error", "Por favor introduce un email válido");
+                return;
+            }
+        }
+
         setLoading(true);
         try {
-            // Format phone number with +34 if not already present
             let formattedPhone = telefono.trim();
             if (formattedPhone && !formattedPhone.startsWith('+')) {
-                // Remove any leading zeros
                 formattedPhone = formattedPhone.replace(/^0+/, '');
-                // Add +34 prefix for Spain
                 formattedPhone = '+34' + formattedPhone;
             }
 
@@ -106,17 +121,17 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 nombre,
                 apellidos,
                 puesto,
-                altura: altura ? parseFloat(altura) : null,
+                altura: altura ? parseFloat(String(altura).replace(/,/g, '.')) : null,
                 fechaIngreso,
-                suplemento,
+                suplemento: suplemento ? parseFloat(String(suplemento).replace(/,/g, '.')) : null,
                 trabajadera: parseInt(trabajadera, 10),
                 telefono: formattedPhone,
-                email,
+                email: email.trim() ? email.toLowerCase().trim() : null,
+                año: currentYear,
                 updatedAt: new Date().toISOString()
             };
 
             if (costaleroId) {
-                // Update
                 const { error } = await supabase
                     .from('costaleros')
                     .update(costaleroData)
@@ -125,7 +140,6 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 if (error) throw error;
                 Alert.alert("Éxito", "Costalero actualizado");
             } else {
-                // Create
                 costaleroData.createdAt = new Date().toISOString();
                 const { error } = await supabase
                     .from('costaleros')
@@ -143,27 +157,130 @@ export default function CostaleroFormScreen({ navigation, route }) {
         }
     };
 
+    const InfoRow = ({ icon, label, value, color = '#5E35B1', onValuePress = null }) => (
+        <View style={styles.infoRow}>
+            <View style={[styles.infoIconContainer, { backgroundColor: color + '15' }]}>
+                <MaterialIcons name={icon} size={22} color={color} />
+            </View>
+            <View style={styles.infoTextContainer}>
+                <Text style={styles.infoLabel}>{label}</Text>
+                <TouchableOpacity onPress={onValuePress} disabled={!onValuePress}>
+                    <Text style={[styles.infoValue, onValuePress && { color: '#1565C0' }]}>{value || 'No registrado'}</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+    );
+
+    const SectionHeader = ({ title }) => (
+        <View style={styles.sectionHeader}>
+            <View style={styles.sectionHeaderLine} />
+            <Text style={styles.sectionTitle}>{title}</Text>
+            <View style={styles.sectionHeaderLine} />
+        </View>
+    );
+
     if (loading && costaleroId && !nombre) {
         return <ActivityIndicator size="large" style={styles.loading} />;
     }
 
+    if (readOnly) {
+        return (
+            <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+                <View style={styles.profileHeader}>
+                    <View style={styles.avatarCircle}>
+                        <Text style={styles.avatarText}>{nombre?.[0]}{apellidos?.[0]}</Text>
+                    </View>
+                    <Text style={styles.profileName}>{nombre} {apellidos}</Text>
+                    {puesto ? (
+                        <View style={styles.puestoBadge}>
+                            <Text style={styles.puestoBadgeText}>{puesto.toUpperCase()}</Text>
+                        </View>
+                    ) : null}
+                </View>
+
+                <SectionHeader title="Datos Técnicos" />
+                <View style={styles.cardContainer}>
+                    <InfoRow icon="grid-view" label="Trabajadera" value={trabajadera === '0' ? 'Sin Asignar' : `Trabajadera ${trabajadera}`} />
+                    <InfoRow icon="straighten" label="Altura" value={altura ? `${altura} m` : 'No registrada'} color="#1976D2" />
+                    <InfoRow icon="vertical-align-top" label="Suplemento" value={suplemento ? `${suplemento} cm` : 'Sin suplemento'} color="#388E3C" />
+                    <InfoRow icon="event" label="Fecha de Ingreso" value={fechaIngreso} color="#F57C00" />
+                </View>
+
+                <SectionHeader title="Contacto" />
+                <View style={styles.cardContainer}>
+                    <InfoRow
+                        icon="phone"
+                        label="Teléfono"
+                        value={telefono}
+                        color="#2E7D32"
+                        onValuePress={() => telefono && Linking.openURL(`tel:${telefono}`)}
+                    />
+                    <InfoRow
+                        icon="email"
+                        label="Correo Electrónico"
+                        value={email}
+                        color="#D32F2F"
+                        onValuePress={() => email && Linking.openURL(`mailto:${email}`)}
+                    />
+                </View>
+
+                {costaleroId ? (
+                    <View style={styles.qrCard}>
+                        <SectionHeader title="Código QR de Asistencia" />
+                        <Text style={styles.qrNameText}>{nombre} {apellidos}</Text>
+                        <QRCode value={String(costaleroId)} size={200} />
+                        <Text style={styles.qrHint}>Muestra este código para que el capataz registre tu asistencia.</Text>
+                    </View>
+                ) : null}
+
+                {costaleroId && (
+                    <View style={styles.profileActions}>
+                        <TouchableOpacity
+                            style={styles.historyBtn}
+                            onPress={() => navigation.navigate('CostaleroHistory', { costaleroId, costaleroName: `${nombre} ${apellidos}` })}
+                        >
+                            <MaterialIcons name="assessment" size={24} color="white" />
+                            <Text style={styles.historyBtnText}>HISTORIAL COMPLETO</Text>
+                        </TouchableOpacity>
+
+                        {telefono && (
+                            <View style={styles.contactActions}>
+                                <TouchableOpacity
+                                    style={[styles.smallActionBtn, { backgroundColor: '#25D366' }]}
+                                    onPress={() => Linking.openURL(`whatsapp://send?phone=${telefono}`)}
+                                >
+                                    <MaterialIcons name="chat" size={20} color="white" />
+                                    <Text style={styles.smallActionText}>WhatsApp</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.smallActionBtn, { backgroundColor: '#34b7f1' }]}
+                                    onPress={() => Linking.openURL(`tel:${telefono}`)}
+                                >
+                                    <MaterialIcons name="call" size={20} color="white" />
+                                    <Text style={styles.smallActionText}>Llamar</Text>
+                                </TouchableOpacity>
+                            </View>
+                        )}
+                    </View>
+                )}
+            </ScrollView>
+        );
+    }
+
     return (
         <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-            {/* 1. Nombre */}
             <Text style={styles.label}>Nombre</Text>
             <TextInput style={styles.input} value={nombre} onChangeText={setNombre} />
 
-            {/* 2. Apellidos */}
             <Text style={styles.label}>Apellidos</Text>
             <TextInput style={styles.input} value={apellidos} onChangeText={setApellidos} />
 
-            {/* 3. Trabajadera */}
             <Text style={styles.label}>Trabajadera</Text>
             <View style={styles.input}>
                 <Picker
                     selectedValue={trabajadera}
                     style={{ color: '#212121' }}
-                    onValueChange={(itemValue, itemIndex) => setTrabajadera(itemValue)}>
+                    onValueChange={(itemValue) => setTrabajadera(itemValue)}>
                     <Picker.Item label="Trabajadera 1" value="1" />
                     <Picker.Item label="Trabajadera 2" value="2" />
                     <Picker.Item label="Trabajadera 3" value="3" />
@@ -175,13 +292,12 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 </Picker>
             </View>
 
-            {/* 4. Puesto */}
             <Text style={styles.label}>Puesto</Text>
             <View style={styles.input}>
                 <Picker
                     selectedValue={puesto}
                     style={{ color: '#212121' }}
-                    onValueChange={(itemValue, itemIndex) => setPuesto(itemValue)}>
+                    onValueChange={(itemValue) => setPuesto(itemValue)}>
                     <Picker.Item label="Seleccionar Puesto" value="" />
                     <Picker.Item label="Patero Izquierdo" value="Patero Izquierdo" />
                     <Picker.Item label="Patero Derecho" value="Patero Derecho" />
@@ -193,13 +309,12 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 </Picker>
             </View>
 
-            {/* 5. Suplemento (Nuevo) */}
             <Text style={styles.label}>Suplemento</Text>
             <View style={styles.input}>
                 <Picker
                     selectedValue={suplemento}
                     style={{ color: '#212121' }}
-                    onValueChange={(itemValue, itemIndex) => setSuplemento(itemValue)}>
+                    onValueChange={(itemValue) => setSuplemento(itemValue)}>
                     <Picker.Item label="Nada" value="" />
                     <Picker.Item label="0.5 cm" value="0.5" />
                     <Picker.Item label="1.0 cm" value="1.0" />
@@ -216,66 +331,43 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 </Picker>
             </View>
 
-            {/* 6. Altura */}
             <Text style={styles.label}>Altura (m)</Text>
             <TextInput style={styles.input} value={altura} onChangeText={setAltura} keyboardType="numeric" />
 
-            {/* 7. Fecha Ingreso (Sustituye a Fecha Nacimiento) */}
             <Text style={styles.label}>Fecha de Ingreso (DD/MM/AAAA)</Text>
             <TextInput style={styles.input} value={fechaIngreso} onChangeText={setFechaIngreso} placeholder="Ej: 15/03/2018" />
 
-            {/* 8. Teléfono */}
             <Text style={styles.label}>Teléfono</Text>
             <TextInput style={styles.input} value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" />
 
-            {costaleroId && telefono ? (
-                <View style={styles.actionButtons}>
-                    <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#25D366' }]} onPress={() => Linking.openURL(`whatsapp://send?phone=${telefono}`)}>
-                        <Text style={styles.btnText}>WhatsApp</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#34b7f1' }]} onPress={() => Linking.openURL(`tel:${telefono}`)}>
-                        <Text style={styles.btnText}>Llamar</Text>
-                    </TouchableOpacity>
-                </View>
-            ) : null}
-
-            {/* 9. Email */}
-            <Text style={styles.label}>Email</Text>
+            <Text style={styles.label}>Email (Opcional)</Text>
+            <Text style={styles.emailHint}>💡 Si el costalero quiere usar la app, deberá tener su email aquí para poder registrarse.</Text>
             <TextInput style={styles.input} value={email} onChangeText={setEmail} keyboardType="email-address" />
-
-            {costaleroId && (
-                <View style={{ marginBottom: 20 }}>
-                    <Button
-                        title="📜 Ver Historial de Asistencia"
-                        onPress={() => navigation.navigate('CostaleroHistory', { costaleroId: costaleroId, costaleroName: `${nombre} ${apellidos}` })}
-                    />
-                </View>
-            )}
 
             {loading ? (
                 <ActivityIndicator color="blue" />
             ) : (
-                <Button title={costaleroId ? "Actualizar" : "Guardar Costalero"} onPress={handleSave} />
-            )}
-
-            {costaleroId && (
-                <View style={{ marginTop: 20, marginBottom: 50 }}>
-                    <Button title="🗑️ Eliminar Costalero" onPress={handleDelete} color="red" />
+                <View style={{ marginTop: 10 }}>
+                    <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
+                        <Text style={styles.saveBtnText}>{costaleroId ? "ACTUALIZAR" : "GUARDAR COSTALERO"}</Text>
+                    </TouchableOpacity>
                 </View>
             )}
 
-            {costaleroId && (
-                <View style={styles.qrInfo}>
-                    <Text style={styles.qrLabel}>{nombre} {apellidos}</Text>
-                    <View style={styles.qrContainer}>
-                        <QRCode
-                            value={costaleroId}
-                            size={200}
-                        />
-                    </View>
-                    <Text style={styles.qrCode}>{costaleroId}</Text>
-                    <Text style={styles.hint}>Haz una captura o comparte este código con el costalero.</Text>
+            {costaleroId ? (
+                <View style={styles.qrCard}>
+                    <SectionHeader title="Código QR de Asistencia" />
+                    <Text style={styles.qrNameText}>{nombre} {apellidos}</Text>
+                    <QRCode value={String(costaleroId)} size={200} />
+                    <Text style={styles.qrHint}>Muestra este código para que el capataz registre tu asistencia.</Text>
                 </View>
+            ) : null}
+
+            {costaleroId && (
+                <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
+                    <MaterialIcons name="delete-outline" size={24} color="#D32F2F" />
+                    <Text style={styles.deleteBtnText}>ELIMINAR COSTALERO</Text>
+                </TouchableOpacity>
             )}
         </ScrollView>
     );
@@ -288,7 +380,113 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         padding: 20,
-        paddingBottom: 100 // Asegura espacio para el teclado y botones inferiores
+        paddingBottom: 150
+    },
+    profileHeader: {
+        alignItems: 'center',
+        paddingVertical: 24,
+        backgroundColor: 'white',
+        borderRadius: 20,
+        marginBottom: 20,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 10,
+        elevation: 2,
+    },
+    avatarCircle: {
+        width: 80,
+        height: 80,
+        borderRadius: 40,
+        backgroundColor: '#EDE7F6',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+        borderWidth: 2,
+        borderColor: '#5E35B1'
+    },
+    avatarText: {
+        fontSize: 32,
+        fontWeight: '800',
+        color: '#5E35B1'
+    },
+    profileName: {
+        fontSize: 22,
+        fontWeight: '800',
+        color: '#212121',
+        marginBottom: 8,
+        textAlign: 'center'
+    },
+    puestoBadge: {
+        backgroundColor: '#E8EAF6',
+        paddingHorizontal: 12,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    puestoBadgeText: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#3F51B5',
+        letterSpacing: 0.5
+    },
+    sectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginVertical: 16,
+        paddingHorizontal: 8
+    },
+    sectionHeaderLine: {
+        flex: 1,
+        height: 1,
+        backgroundColor: '#EEEEEE'
+    },
+    sectionTitle: {
+        fontSize: 12,
+        fontWeight: '800',
+        color: '#BDBDBD',
+        marginHorizontal: 12,
+        textTransform: 'uppercase',
+        letterSpacing: 1
+    },
+    cardContainer: {
+        backgroundColor: 'white',
+        borderRadius: 16,
+        padding: 16,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 3,
+        elevation: 1,
+    },
+    infoRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5'
+    },
+    infoIconContainer: {
+        width: 40,
+        height: 40,
+        borderRadius: 10,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 16
+    },
+    infoTextContainer: {
+        flex: 1
+    },
+    infoLabel: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#9E9E9E',
+        textTransform: 'uppercase',
+        marginBottom: 2
+    },
+    infoValue: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#424242'
     },
     label: {
         fontSize: 14,
@@ -305,102 +503,118 @@ const styles = StyleSheet.create({
         marginBottom: 18,
         backgroundColor: 'white',
         fontSize: 16,
-        color: '#212121',
+        color: '#212121'
+    },
+    emailHint: {
+        fontSize: 12,
+        color: '#FF9800',
+        marginBottom: 8,
+        fontWeight: '500'
+    },
+    profileActions: {
+        marginTop: 24,
+    },
+    historyBtn: {
+        backgroundColor: '#5E35B1',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        borderRadius: 15,
+        marginBottom: 16,
+        shadowColor: "#5E35B1",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+        elevation: 4
+    },
+    historyBtnText: {
+        color: 'white',
+        fontWeight: '800',
+        fontSize: 16,
+        marginLeft: 12,
+        letterSpacing: 0.5
+    },
+    contactActions: {
+        flexDirection: 'row',
+        justifyContent: 'space-between'
+    },
+    smallActionBtn: {
+        flex: 0.48,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 12,
+        borderRadius: 12,
+        elevation: 2
+    },
+    smallActionText: {
+        color: 'white',
+        fontWeight: '700',
+        fontSize: 14,
+        marginLeft: 8
+    },
+    saveBtn: {
+        backgroundColor: '#5E35B1',
+        paddingVertical: 16,
+        borderRadius: 12,
+        alignItems: 'center',
+        marginTop: 10
+    },
+    saveBtnText: {
+        color: 'white',
+        fontWeight: '800',
+        fontSize: 16,
+        letterSpacing: 0.5
+    },
+    deleteBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        borderRadius: 12,
+        marginTop: 20,
+        marginBottom: 50,
+        borderWidth: 1,
+        borderColor: '#FFCDD2'
+    },
+    deleteBtnText: {
+        color: '#D32F2F',
+        fontWeight: '700',
+        fontSize: 14,
+        marginLeft: 10
+    },
+    qrCard: {
+        backgroundColor: 'white',
+        borderRadius: 20,
+        padding: 24,
+        alignItems: 'center',
+        marginTop: 20,
+        marginBottom: 20,
+        borderWidth: 1,
+        borderColor: '#EEEEEE',
         shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
+        shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.05,
-        shadowRadius: 2,
-        elevation: 1,
+        shadowRadius: 10,
+        elevation: 2,
+    },
+    qrNameText: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#5E35B1',
+        marginBottom: 20,
+        textAlign: 'center'
+    },
+    qrHint: {
+        fontSize: 13,
+        color: '#757575',
+        textAlign: 'center',
+        fontStyle: 'italic',
+        lineHeight: 18,
+        marginTop: 20
     },
     loading: {
         marginTop: 50
-    },
-    qrInfo: {
-        marginTop: 30,
-        padding: 24,
-        backgroundColor: 'white',
-        borderRadius: 16,
-        alignItems: 'center',
-        shadowColor: "#5E35B1",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.15,
-        shadowRadius: 12,
-        elevation: 6,
-        borderWidth: 1,
-        borderColor: '#E8E0F5'
-    },
-    qrLabel: {
-        fontSize: 20,
-        fontWeight: '700',
-        marginBottom: 16,
-        color: '#5E35B1',
-        letterSpacing: 0.5
-    },
-    qrContainer: {
-        padding: 16,
-        backgroundColor: 'white',
-        borderRadius: 12,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-        elevation: 3,
-    },
-    qrCode: {
-        fontSize: 13,
-        fontFamily: 'monospace',
-        marginVertical: 12,
-        letterSpacing: 1,
-        color: '#757575',
-        backgroundColor: '#F5F5F5',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 6
-    },
-    hint: {
-        fontSize: 13,
-        color: '#9E9E9E',
-        textAlign: 'center',
-        marginTop: 8,
-        fontStyle: 'italic'
-    },
-    actionButtons: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        marginBottom: 20,
-        marginTop: 10
-    },
-    actionBtn: {
-        flex: 1,
-        marginHorizontal: 6,
-        paddingVertical: 14,
-        borderRadius: 10,
-        alignItems: 'center',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.2,
-        shadowRadius: 4,
-        elevation: 3,
-    },
-    btnText: {
-        color: 'white',
-        fontWeight: '700',
-        fontSize: 15,
-        letterSpacing: 0.5
-    },
-    deleteButton: {
-        backgroundColor: '#FFEBEE',
-        padding: 16,
-        borderRadius: 10,
-        alignItems: 'center',
-        marginTop: 30,
-        borderWidth: 2,
-        borderColor: '#F44336'
-    },
-    deleteButtonText: {
-        color: '#F44336',
-        fontWeight: '700',
-        fontSize: 16,
-        letterSpacing: 0.5
     }
 });

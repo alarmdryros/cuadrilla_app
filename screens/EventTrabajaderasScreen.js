@@ -12,10 +12,20 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
 
     const fetchData = async () => {
         try {
-            // Load all costaleros to get trabajadera info
+            // 1. Get Event Details to know the year
+            const { data: eventData, error: eventError } = await supabase
+                .from('eventos')
+                .select('año')
+                .eq('id', eventId)
+                .single();
+
+            if (eventError) throw eventError;
+
+            // 2. Load costaleros for this year only
             const { data: costalerosData, error: costError } = await supabase
                 .from('costaleros')
                 .select('*')
+                .eq('año', eventData.año || 2024)
                 .order('apellidos');
 
             if (costError) throw costError;
@@ -30,15 +40,37 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
 
             if (asisError) throw asisError;
 
-            // Filter and map asistencias
-            const asistenciasList = (asistenciasData || [])
-                .filter(data => data.status === 'presente' || data.status === 'justificado')
-                .map(data => ({
-                    ...data,
-                    costaleroId: data.costalero_id // Map snake_case to camelCase for existing logic
-                }));
+            // Deduplicate: If there are multiple records for the same costalero, keep the most recent one
+            const uniqueAsisMap = (asistenciasData || []).reduce((acc, a) => {
+                const cId = a.costalero_id || a.costaleroId;
+                if (!acc[cId] || new Date(a.timestamp) > new Date(acc[cId].timestamp)) {
+                    acc[cId] = a;
+                }
+                return acc;
+            }, {});
+            const uniqueAsistenciasData = Object.values(uniqueAsisMap);
 
-            setAsistencias(asistenciasList);
+            // Filter and map asistencias
+            // Create a map of attendance by costaleroId
+            const attendanceMap = {};
+            uniqueAsistenciasData.forEach(a => {
+                attendanceMap[a.costalero_id || a.costaleroId] = a;
+            });
+
+            // Build full list: Costaleros + Status
+            const fullList = (costalerosData || []).map(costalero => {
+                const asistencia = attendanceMap[costalero.id];
+                return {
+                    id: asistencia ? asistencia.id : `pending-${costalero.id}`,
+                    costaleroId: costalero.id,
+                    nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
+                    status: asistencia ? asistencia.status : 'ausente', // Default to 'ausente' if no record
+                    timestamp: asistencia ? asistencia.timestamp : null,
+                    trabajadera: costalero.trabajadera // Ensure we have this for grouping
+                };
+            });
+
+            setAsistencias(fullList);
         } catch (error) {
             console.error(error);
         } finally {
@@ -102,8 +134,9 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
             const key = i.toString();
             result.push({
                 title: `Trabajadera ${i}`,
+                title: `Trabajadera ${i}`,
                 data: grouped[key] || [],
-                present: (grouped[key] || []).length,
+                present: (grouped[key] || []).filter(i => i.status === 'presente').length,
                 total: totals[key] || 0,
                 trabajaderaNum: i
             });
@@ -114,7 +147,7 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
             result.push({
                 title: 'Sin Asignar',
                 data: grouped['0'] || [],
-                present: (grouped['0'] || []).length,
+                present: (grouped['0'] || []).filter(i => i.status === 'presente').length,
                 total: totals['0'] || 0,
                 trabajaderaNum: 0
             });
@@ -127,22 +160,46 @@ export default function EventTrabajaderasScreen({ route, navigation }) {
         <View style={[
             styles.attendeeItem,
             item.status === 'justificado' && styles.justifiedItem,
-            item.status === 'presente' && styles.presenteItem
+            item.status === 'presente' && styles.presenteItem,
+            item.status === 'ausente' && styles.ausenteItem
         ]}>
             <View style={{ flex: 1 }}>
                 <Text style={styles.attendeeName}>{item.nombreCostalero}</Text>
-                {item.status === 'justificado' && (
-                    <Text style={styles.justifiedBadge}>📝 Justificado</Text>
-                )}
-                {item.status === 'presente' && (
-                    <Text style={styles.presenteBadge}>✅ Presente</Text>
-                )}
+                <View style={[styles.statusBadge, getBadgeStyle(item.status)]}>
+                    <Text style={[styles.statusText, getTextStyle(item.status)]}>
+                        {getStatusLabel(item.status)}
+                    </Text>
+                </View>
             </View>
             <Text style={styles.attendeeTime}>
                 {item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
             </Text>
         </View>
     );
+
+    const getBadgeStyle = (status) => {
+        switch (status) {
+            case 'presente': return { backgroundColor: '#E8F5E9', borderColor: '#4CAF50' };
+            case 'justificado': return { backgroundColor: '#FFF3E0', borderColor: '#FF9800' };
+            default: return { backgroundColor: '#FFEBEE', borderColor: '#F44336' };
+        }
+    };
+
+    const getTextStyle = (status) => {
+        switch (status) {
+            case 'presente': return { color: '#2E7D32' };
+            case 'justificado': return { color: '#EF6C00' };
+            default: return { color: '#C62828' };
+        }
+    };
+
+    const getStatusLabel = (status) => {
+        switch (status) {
+            case 'presente': return '✅ Presente';
+            case 'justificado': return '📝 Justificado';
+            default: return '❌ Ausente';
+        }
+    };
 
     const renderSectionHeader = ({ section }) => {
         const percentage = section.total > 0 ? Math.round((section.present / section.total) * 100) : 0;
@@ -205,7 +262,7 @@ const styles = StyleSheet.create({
         alignItems: 'center'
     },
     list: {
-        paddingBottom: 20
+        paddingBottom: 150
     },
     sectionHeader: {
         backgroundColor: '#F5F5F5',
@@ -290,17 +347,22 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: '#212121',
     },
-    justifiedBadge: {
-        fontSize: 12,
-        color: '#FF9800',
-        marginTop: 4,
-        fontWeight: '600'
+    statusBadge: {
+        alignSelf: 'flex-start',
+        borderWidth: 1,
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        marginTop: 4
     },
-    presenteBadge: {
-        fontSize: 12,
-        color: '#4CAF50',
-        marginTop: 4,
-        fontWeight: '600'
+    statusText: {
+        fontSize: 11,
+        fontWeight: 'bold'
+    },
+    ausenteItem: {
+        backgroundColor: '#FFEBEE',
+        borderLeftWidth: 3,
+        borderLeftColor: '#F44336'
     },
     attendeeTime: {
         fontSize: 13,

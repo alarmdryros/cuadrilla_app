@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
 
-export default function LoginScreen() {
+export default function LoginScreen({ navigation }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [loading, setLoading] = useState(false);
@@ -99,7 +99,14 @@ export default function LoginScreen() {
                     )}
                 </View>
 
-                <Text style={styles.hint}>Solo para capataz y asistentes autorizados</Text>
+                <TouchableOpacity
+                    style={styles.registerButton}
+                    onPress={() => navigation.navigate('Register')}
+                >
+                    <Text style={styles.registerText}>¿No tienes cuenta? Regístrate aquí</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.hint}>Capataces y costaleros autorizados</Text>
             </View>
         </KeyboardAvoidingView>
     );
@@ -216,11 +223,22 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 16,
         fontWeight: '700',
-        letterSpacing: 0.5
+        letterSpacing: 0.5,
+        textAlign: 'center' // Asegura el centrado exacto
     },
     loader: {
         marginTop: 24,
         color: '#1a5d1a'
+    },
+    registerButton: {
+        marginTop: 20,
+        padding: 12,
+        alignItems: 'center'
+    },
+    registerText: {
+        color: '#5E35B1',
+        fontSize: 14,
+        fontWeight: '600'
     },
     hint: {
         textAlign: 'center',

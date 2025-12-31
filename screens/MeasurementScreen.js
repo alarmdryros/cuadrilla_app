@@ -2,10 +2,14 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, SectionList, ActivityIndicator, TextInput, TouchableOpacity, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../supabaseConfig';
-import { MaterialIcons } from '@expo/vector-icons';
+import { useAuth } from '../contexts/AuthContext';
+import { MaterialIcons } from '../components/Icon';
 
 export default function MeasurementScreen({ route, navigation }) {
     const { eventId, eventName } = route.params;
+    const { userRole } = useAuth();
+    const isManagement = userRole === 'admin' || userRole === 'capataz';
+
     const [sections, setSections] = useState([]);
     const [asistencias, setAsistencias] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -102,39 +106,99 @@ export default function MeasurementScreen({ route, navigation }) {
     };
 
     const updateMeasurement = async (attendanceId, field, value) => {
+        if (!isManagement) return;
         try {
             // Map camelCase field to snake_case column
             const dbField = field === 'alturaAntes' ? 'altura_antes' : 'altura_despues';
 
+            // Sanitize value: replace comma with dot and parse as float
+            const cleanValue = value ? parseFloat(String(value).replace(/,/g, '.')) : null;
+            if (value && isNaN(cleanValue)) {
+                Alert.alert("Error", "Introduce un número válido");
+                return;
+            }
+
             const { error } = await supabase
                 .from('asistencias')
                 .update({
-                    [dbField]: value
+                    [dbField]: cleanValue
                 })
                 .eq('id', attendanceId);
 
             if (error) throw error;
+            fetchData(); // Refresh to ensure UI is in sync
         } catch (e) {
             console.error(e);
             Alert.alert("Error", "No se pudo guardar la medición");
         }
     };
 
+    const confirmClear = (attendanceId, name) => {
+        if (!isManagement) return;
+        Alert.alert(
+            "Borrar Mediciones",
+            `¿Estás seguro de borrar las medidas de ${name}?`,
+            [
+                { text: "Cancelar", style: "cancel" },
+                {
+                    text: "Sí, borrar",
+                    style: "destructive",
+                    onPress: async () => {
+                        const { error } = await supabase
+                            .from('asistencias')
+                            .update({ altura_antes: null, altura_despues: null })
+                            .eq('id', attendanceId);
+                        if (error) Alert.alert("Error", error.message);
+                        else fetchData();
+                    }
+                }
+            ]
+        );
+    };
+
+    const confirmSave = (attendanceId, field, value, name) => {
+        if (!isManagement) return;
+        if (!value) return;
+
+        const label = field === 'alturaAntes' ? 'ANTES' : 'DESPUÉS';
+        Alert.alert(
+            "Validar Medida",
+            `¿Registrar ${value} cm como altura ${label} para ${name}?`,
+            [
+                { text: "Cancelar", style: "cancel" },
+                {
+                    text: "Validar",
+                    onPress: () => updateMeasurement(attendanceId, field, value)
+                }
+            ]
+        );
+    };
+
     const renderItem = ({ item }) => (
         <View style={styles.card}>
             <View style={styles.cardHeader}>
                 <Text style={styles.name}>{item.nombreCostalero}</Text>
+                {isManagement && (
+                    <TouchableOpacity onPress={() => confirmClear(item.id, item.nombreCostalero)}>
+                        <MaterialIcons name="delete-sweep" size={24} color="#D32F2F" />
+                    </TouchableOpacity>
+                )}
             </View>
 
             <View style={styles.measureRow}>
                 <View style={styles.inputContainer}>
                     <Text style={styles.inputLabel}>Altura ANTES</Text>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, !isManagement && styles.disabledInput]}
                         placeholder="cm"
                         keyboardType="numeric"
+                        editable={isManagement}
                         defaultValue={item.alturaAntes ? String(item.alturaAntes) : ''}
-                        onEndEditing={(e) => updateMeasurement(item.id, 'alturaAntes', e.nativeEvent.text)}
+                        onEndEditing={(e) => {
+                            if (e.nativeEvent.text !== (item.alturaAntes ? String(item.alturaAntes) : '')) {
+                                confirmSave(item.id, 'alturaAntes', e.nativeEvent.text, item.nombreCostalero);
+                            }
+                        }}
                     />
                 </View>
 
@@ -143,11 +207,16 @@ export default function MeasurementScreen({ route, navigation }) {
                 <View style={styles.inputContainer}>
                     <Text style={styles.inputLabel}>Altura DESPUÉS</Text>
                     <TextInput
-                        style={styles.input}
+                        style={[styles.input, !isManagement && styles.disabledInput]}
                         placeholder="cm"
                         keyboardType="numeric"
+                        editable={isManagement}
                         defaultValue={item.alturaDespues ? String(item.alturaDespues) : ''}
-                        onEndEditing={(e) => updateMeasurement(item.id, 'alturaDespues', e.nativeEvent.text)}
+                        onEndEditing={(e) => {
+                            if (e.nativeEvent.text !== (item.alturaDespues ? String(item.alturaDespues) : '')) {
+                                confirmSave(item.id, 'alturaDespues', e.nativeEvent.text, item.nombreCostalero);
+                            }
+                        }}
                     />
                 </View>
             </View>
@@ -232,12 +301,21 @@ const styles = StyleSheet.create({
         marginBottom: 16,
         borderBottomWidth: 1,
         borderBottomColor: '#F5F5F5',
-        paddingBottom: 8
+        paddingBottom: 8,
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center'
     },
     name: {
         fontSize: 16,
         fontWeight: '600',
-        color: '#212121'
+        color: '#212121',
+        flex: 1
+    },
+    disabledInput: {
+        backgroundColor: '#EEEEEE',
+        color: '#9E9E9E',
+        borderColor: '#E0E0E0'
     },
     measureRow: {
         flexDirection: 'row',
