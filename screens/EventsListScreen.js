@@ -319,7 +319,7 @@ export default function EventsListScreen({ navigation }) {
                                 <MaterialIcons name="logout" size={20} color="#D32F2F" />
                                 <Text style={styles.logoutText}>Cerrar Sesión</Text>
                             </TouchableOpacity>
-                            <Text style={styles.versionText}>v2.2.5</Text>
+                            <Text style={styles.versionText}>v2.3.0</Text>
                         </View>
                     </View>
                 </TouchableOpacity>
