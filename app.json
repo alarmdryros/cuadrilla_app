@@ -3,7 +3,7 @@
     "name": "cuadrilla_app",
     "slug": "cuadrilla_app",
     "scheme": "cuadrillaapp",
-    "version": "2.3.0",
+    "version": "2.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -39,7 +39,7 @@
     ],
     "android": {
       "package": "com.zapedevil.cuadrilla_app",
-      "versionCode": 8,
+      "versionCode": 9,
       "permissions": [
         "CAMERA",
         "android.permission.CAMERA",
