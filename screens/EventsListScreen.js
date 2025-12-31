@@ -7,6 +7,9 @@ import { MaterialIcons } from '../components/Icon';
 import { useAuth } from '../contexts/AuthContext';
 import { useSeason } from '../contexts/SeasonContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useOffline } from '../contexts/OfflineContext';
+import { OfflineService } from '../services/OfflineService';
+import SideMenu from '../components/SideMenu';
 
 import { normalizeString } from '../utils/stringUtils';
 
@@ -18,22 +21,40 @@ export default function EventsListScreen({ navigation }) {
     const [searchQuery, setSearchQuery] = useState('');
     const [currentTime, setCurrentTime] = useState(new Date());
     const { unreadCount } = useNotifications();
+    const { isOffline, isSyncing, queueSize } = useOffline();
 
     const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
     const fetchEventos = async () => {
         try {
-            const { data, error } = await supabase
-                .from('eventos')
-                .select('*')
-                .eq('año', selectedYear)
-                .order('fecha', { ascending: false });
+            // 1. Cargar desde caché primero para rapidez
+            const cached = await OfflineService.getEvents();
+            if (cached && cached.length > 0 && eventos.length === 0) {
+                setEventos(cached);
+            }
 
-            if (error) throw error;
-            setEventos(data || []);
+            // 2. Si no estamos totalmente offline, intentar fetch
+            if (!isOffline) {
+                const { data, error } = await supabase
+                    .from('eventos')
+                    .select('*')
+                    .eq('año', selectedYear)
+                    .order('fecha', { ascending: false });
+
+                if (error) throw error;
+
+                if (data) {
+                    setEventos(data);
+                    // 3. Guardar en caché para la próxima vez
+                    await OfflineService.saveEvents(data);
+                }
+            }
         } catch (error) {
             console.error(error);
-            Alert.alert("Error", "No se pudieron cargar los eventos");
+            // Solo alertamos si no es un error de red esperado
+            if (!isOffline) {
+                Alert.alert("Error", "No se pudieron cargar los eventos");
+            }
         }
     };
 
@@ -140,6 +161,7 @@ export default function EventsListScreen({ navigation }) {
         navigation.navigate(screen, params);
     };
 
+    // Note: handleLogout is now handled in SideMenu, but we can keep it here if needed or remove it
     const handleLogout = async () => {
         try {
             await supabase.auth.signOut();
@@ -161,6 +183,27 @@ export default function EventsListScreen({ navigation }) {
                 />
             </View>
 
+            {isOffline && (
+                <View style={styles.offlineBanner}>
+                    <MaterialIcons name="cloud-off" size={16} color="#B91C1C" />
+                    <Text style={styles.offlineText}>Modo Offline Activo</Text>
+                    {queueSize > 0 && <Text style={styles.queueText}>({queueSize} cambios pendientes)</Text>}
+                </View>
+            )}
+
+            {isSyncing && (
+                <View style={[styles.offlineBanner, { backgroundColor: '#DBEAFE' }]}>
+                    <MaterialIcons name="sync" size={16} color="#1E40AF" />
+                    <Text style={[styles.offlineText, { color: '#1E40AF' }]}>Sincronizando datos...</Text>
+                </View>
+            )}
+
+            <SideMenu
+                visible={menuVisible}
+                onClose={() => setMenuVisible(false)}
+                navigation={navigation}
+            />
+
             <FlatList
                 data={filteredEventos}
                 renderItem={renderItem}
@@ -169,161 +212,7 @@ export default function EventsListScreen({ navigation }) {
                 ListEmptyComponent={EmptyComponent}
             />
 
-            <Modal
-                visible={menuVisible}
-                transparent={true}
-                animationType="fade"
-                onRequestClose={() => setMenuVisible(false)}
-            >
-                <TouchableOpacity
-                    style={styles.modalOverlay}
-                    activeOpacity={1}
-                    onPress={() => setMenuVisible(false)}
-                >
-                    <View style={styles.menuContainer}>
-                        <View style={styles.menuHeader}>
-                            <MaterialIcons name="event-note" size={48} color="#5E35B1" />
-                            <Text style={styles.menuTitle}>Cuadrilla App</Text>
-                            <Text style={styles.menuSubtitle}>
-                                {isManagement ? 'Gestión de Costaleros' : 'Panel de Costalero'}
-                            </Text>
-                            {!isManagement && userProfile && (
-                                <Text style={styles.userEmail}>{userProfile.email}</Text>
-                            )}
-                        </View>
-
-                        <ScrollView
-                            style={styles.menuItemsContainer}
-                            contentContainerStyle={{ paddingBottom: 20 }}
-                            showsVerticalScrollIndicator={false}
-                        >
-                            {isManagement && (
-                                <>
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('EventForm')}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#EDE7F6' }]}>
-                                            <MaterialIcons name="add-circle-outline" size={20} color="#5E35B1" />
-                                        </View>
-                                        <Text style={styles.menuText}>Nuevo Evento</Text>
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('CostalerosList')}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#E3F2FD' }]}>
-                                            <MaterialIcons name="people-outline" size={20} color="#1565C0" />
-                                        </View>
-                                        <Text style={styles.menuText}>Cuadrilla</Text>
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('NotificationsList')}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#FFF3E0' }]}>
-                                            <MaterialIcons name="notifications-none" size={20} color="#FF9800" />
-                                        </View>
-                                        <Text style={styles.menuText}>Buzón de Avisos</Text>
-                                        {unreadCount > 0 && <View style={styles.menuBadge}><Text style={styles.menuBadgeText}>{unreadCount}</Text></View>}
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('Export')}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#E8F5E9' }]}>
-                                            <MaterialIcons name="file-download" size={20} color="#2E7D32" />
-                                        </View>
-                                        <Text style={styles.menuText}>Exportar Datos</Text>
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('SeasonManagement')}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#FBE9E7' }]}>
-                                            <MaterialIcons name="settings-applications" size={20} color="#D84315" />
-                                        </View>
-                                        <Text style={styles.menuText}>Configurar Temporada</Text>
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-                                </>
-                            )}
-
-                            {!isManagement && (
-                                <>
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => {
-                                        if (userProfile?.costalero_id) {
-                                            navigateAndClose('CostaleroHistory', { costaleroId: userProfile.costalero_id });
-                                        } else {
-                                            Alert.alert("Error", "No tienes un perfil de costalero vinculado.");
-                                        }
-                                    }}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#E1F5FE' }]}>
-                                            <MaterialIcons name="history" size={20} color="#0288D1" />
-                                        </View>
-                                        <Text style={styles.menuText}>Mi Historial</Text>
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-
-                                    <TouchableOpacity style={styles.menuItem} onPress={() => {
-                                        if (userProfile?.costalero_id) {
-                                            navigateAndClose('CostaleroForm', {
-                                                costaleroId: userProfile.costalero_id,
-                                                readOnly: true
-                                            });
-                                        } else {
-                                            Alert.alert("Error", "No tienes un perfil de costalero vinculado.");
-                                        }
-                                    }}>
-                                        <View style={[styles.iconContainer, { backgroundColor: '#F3E5F5' }]}>
-                                            <MaterialIcons name="person-outline" size={20} color="#9C27B0" />
-                                        </View>
-                                        <Text style={styles.menuText}>Mi Perfil</Text>
-                                        <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                    </TouchableOpacity>
-                                </>
-                            )}
-                            {/* GESTIÓN SUPER ADMIN */}
-                            {userRole === 'superadmin' && (
-                                <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('SuperAdmin')}>
-                                    <View style={[styles.iconContainer, { backgroundColor: '#FFEBEE' }]}>
-                                        <MaterialIcons name="security" size={20} color="#D32F2F" />
-                                    </View>
-                                    <Text style={styles.menuText}>Panel Super Admin</Text>
-                                    <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
-                                </TouchableOpacity>
-                            )}
-                        </ScrollView>
-
-                        <View style={styles.seasonSelector}>
-                            <View style={styles.seasonHeader}>
-                                <View style={[styles.iconContainer, { backgroundColor: '#EDE7F6', width: 32, height: 32 }]}>
-                                    <MaterialIcons name="date-range" size={18} color="#5E35B1" />
-                                </View>
-                                <Text style={styles.seasonLabel}>Temporada:</Text>
-                            </View>
-                            <View style={styles.pickerWrapper}>
-                                <View style={styles.fakePicker}>
-                                    <Text style={styles.fakePickerText}>Temporada {selectedYear}</Text>
-                                    <MaterialIcons name="arrow-drop-down" size={24} color="#5E35B1" />
-                                </View>
-                                <Picker
-                                    selectedValue={selectedYear}
-                                    onValueChange={(itemValue) => changeSelectedYear(itemValue)}
-                                    style={styles.hiddenPicker}
-                                    dropdownIconColor="transparent"
-                                    mode="dialog"
-                                >
-                                    {availableYears.map(year => (
-                                        <Picker.Item key={year} label={`Temporada ${year}`} value={year} />
-                                    ))}
-                                </Picker>
-                            </View>
-                        </View>
-
-                        <View style={styles.menuFooter}>
-                            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-                                <MaterialIcons name="logout" size={20} color="#D32F2F" />
-                                <Text style={styles.logoutText}>Cerrar Sesión</Text>
-                            </TouchableOpacity>
-                            <Text style={styles.versionText}>v2.3.0</Text>
-                        </View>
-                    </View>
-                </TouchableOpacity>
-            </Modal>
+            {/* El menú lateral ahora se gestiona a través del componente SideMenu compartido */}
         </View>
     );
 }
@@ -427,151 +316,6 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         letterSpacing: 0.5
     },
-    // Menu Styles
-    modalOverlay: {
-        flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.4)',
-        flexDirection: 'row'
-    },
-    menuContainer: {
-        width: '88%',
-        backgroundColor: 'white',
-        paddingVertical: 25,
-        paddingHorizontal: 20,
-        shadowColor: "#000",
-        shadowOffset: { width: 4, height: 0 },
-        shadowOpacity: 0.1,
-        shadowRadius: 10,
-        elevation: 16,
-        borderTopRightRadius: 20,
-        borderBottomRightRadius: 20,
-        maxHeight: '100%'
-    },
-    menuHeader: {
-        marginBottom: 16,
-        marginTop: 0,
-        alignItems: 'center'
-    },
-    menuTitle: {
-        fontSize: 18,
-        fontWeight: '900',
-        color: '#424242',
-        marginTop: 8,
-        letterSpacing: 0.5
-    },
-    menuSubtitle: {
-        fontSize: 12,
-        color: '#9E9E9E',
-        fontWeight: '700',
-        marginTop: 2
-    },
-    userEmail: {
-        fontSize: 12,
-        color: '#5E35B1',
-        marginTop: 4,
-        fontWeight: '600'
-    },
-    menuItemsContainer: {
-        flex: 1
-    },
-    menuItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 8,
-        marginBottom: 4,
-        borderRadius: 12,
-    },
-    iconContainer: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 12
-    },
-    menuText: {
-        fontSize: 15,
-        fontWeight: '800',
-        color: '#424242',
-        letterSpacing: 0.3
-    },
-    menuFooter: {
-        marginTop: 20,
-        paddingTop: 20,
-        borderTopWidth: 1,
-        borderTopColor: '#EEEEEE',
-        alignItems: 'center'
-    },
-    logoutButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#FFEBEE',
-        paddingVertical: 12,
-        paddingHorizontal: 20,
-        borderRadius: 30,
-        marginBottom: 16
-    },
-    logoutText: {
-        color: '#D32F2F',
-        fontWeight: '900',
-        marginLeft: 8,
-        fontSize: 15
-    },
-    versionText: {
-        fontSize: 12,
-        color: '#BDBDBD'
-    },
-    // Season Selector
-    seasonSelector: {
-        marginTop: "auto",
-        paddingTop: 15,
-        borderTopWidth: 1,
-        borderTopColor: '#EEEEEE',
-        marginBottom: 10
-    },
-    seasonHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 10
-    },
-    seasonLabel: {
-        fontSize: 13,
-        fontWeight: '900',
-        color: '#424242',
-        marginLeft: 10,
-        letterSpacing: 0.3
-    },
-    pickerWrapper: {
-        backgroundColor: '#F5F5F5',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#E0E0E0',
-        position: 'relative',
-        height: 55,
-        justifyContent: 'center',
-    },
-    fakePicker: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 15,
-        width: '100%',
-    },
-    fakePickerText: {
-        fontSize: 16,
-        fontWeight: '900',
-        color: '#212121', // Ahora en negro
-    },
-    hiddenPicker: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        opacity: 0, // El picker es invisible pero funcional al tocar
-        width: '100%',
-        height: '100%',
-    },
     badge: {
         position: 'absolute',
         right: 0,
@@ -592,19 +336,26 @@ const styles = StyleSheet.create({
         fontSize: 9,
         fontWeight: 'bold'
     },
-    menuBadge: {
-        backgroundColor: '#D32F2F',
-        borderRadius: 10,
-        minWidth: 20,
-        height: 20,
+    // Offline Styles
+    offlineBanner: {
+        backgroundColor: '#FEE2E2',
+        paddingVertical: 6,
+        flexDirection: 'row',
         justifyContent: 'center',
         alignItems: 'center',
-        marginLeft: 10,
-        paddingHorizontal: 6
+        borderBottomWidth: 1,
+        borderBottomColor: '#FECACA'
     },
-    menuBadgeText: {
-        color: 'white',
-        fontSize: 10,
-        fontWeight: 'bold'
+    offlineText: {
+        color: '#B91C1C',
+        fontSize: 12,
+        fontWeight: '700',
+        marginLeft: 8
+    },
+    queueText: {
+        color: '#B91C1C',
+        fontSize: 11,
+        marginLeft: 4,
+        fontWeight: '500'
     }
 });

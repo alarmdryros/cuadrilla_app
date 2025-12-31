@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, SectionList, ActivityIndicator, TouchableOpacit
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../supabaseConfig';
 import { useAuth } from '../contexts/AuthContext';
+import { useOffline } from '../contexts/OfflineContext';
+import { MaterialIcons } from '../components/Icon';
 
 export default function AttendeeListScreen({ route, navigation }) {
     const { userRole } = useAuth();
@@ -12,6 +14,7 @@ export default function AttendeeListScreen({ route, navigation }) {
 
     const [sections, setSections] = useState([]);
     const [loading, setLoading] = useState(true);
+    const { isOffline, isSyncing, queueSize } = useOffline();
 
     const fetchAsistencias = async () => {
         if (!eventId) return;
@@ -119,6 +122,10 @@ export default function AttendeeListScreen({ route, navigation }) {
     const deleteAsistencia = async (attendanceId) => {
         if (!isManagement) return;
         try {
+            if (isOffline) {
+                Alert.alert("Offline", "La eliminación de asistencias requiere conexión.");
+                return;
+            }
             const { error } = await supabase
                 .from('asistencias')
                 .delete()
@@ -245,6 +252,21 @@ export default function AttendeeListScreen({ route, navigation }) {
                     </View>
                 </View>
             </View>
+
+            {isOffline && (
+                <View style={styles.offlineBanner}>
+                    <MaterialIcons name="cloud-off" size={16} color="#B91C1C" />
+                    <Text style={styles.offlineText}>Modo Offline Activo</Text>
+                    {queueSize > 0 && <Text style={styles.queueText}>({queueSize} cambios pendientes)</Text>}
+                </View>
+            )}
+
+            {isSyncing && (
+                <View style={[styles.offlineBanner, { backgroundColor: '#DBEAFE' }]}>
+                    <MaterialIcons name="sync" size={16} color="#1E40AF" />
+                    <Text style={[styles.offlineText, { color: '#1E40AF' }]}>Sincronizando datos...</Text>
+                </View>
+            )}
 
             <SectionList
                 sections={sections}
@@ -407,5 +429,27 @@ const styles = StyleSheet.create({
         marginTop: 60,
         color: '#9E9E9E',
         fontSize: 16
+    },
+    // Offline Styles
+    offlineBanner: {
+        backgroundColor: '#FEE2E2',
+        paddingVertical: 6,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#FECACA'
+    },
+    offlineText: {
+        color: '#B91C1C',
+        fontSize: 12,
+        fontWeight: '700',
+        marginLeft: 8
+    },
+    queueText: {
+        color: '#B91C1C',
+        fontSize: 11,
+        marginLeft: 4,
+        fontWeight: '500'
     }
 });

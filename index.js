@@ -8,12 +8,13 @@ import App from './App';
 // the environment is set up appropriately
 registerRootComponent(App);
 
-// FORCE UNREGISTER SERVICE WORKER
+// REGISTER SERVICE WORKER FOR PWA PUSH NOTIFICATIONS
 if (Platform.OS === 'web' && 'serviceWorker' in navigator) {
-    navigator.serviceWorker.getRegistrations().then(function (registrations) {
-        for (let registration of registrations) {
-            registration.unregister();
-            console.log('Service Worker unregistered');
-        }
+    window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/service-worker.js').then(function (registration) {
+            console.log('Service Worker registered with scope: ', registration.scope);
+        }, function (err) {
+            console.log('Service Worker registration failed: ', err);
+        });
     });
 }

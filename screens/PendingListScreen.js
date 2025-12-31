@@ -4,6 +4,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
 import { useAuth } from '../contexts/AuthContext';
+import { useOffline } from '../contexts/OfflineContext';
 
 export default function PendingListScreen({ route, navigation }) {
     const { userRole } = useAuth();
@@ -15,6 +16,7 @@ export default function PendingListScreen({ route, navigation }) {
     const [loading, setLoading] = useState(true);
     const [managementModalVisible, setManagementModalVisible] = useState(false);
     const [selectedCostalero, setSelectedCostalero] = useState(null);
+    const { isOffline, isSyncing, queueSize, addMutation } = useOffline();
 
     const fetchPendingCostaleros = async () => {
         if (!eventId) return;
@@ -83,6 +85,29 @@ export default function PendingListScreen({ route, navigation }) {
     const addAsistencia = async (costalero, status) => {
         if (!isManagement) return;
         try {
+            const newData = {
+                event_id: eventId,
+                costalero_id: costalero.id,
+                nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
+                timestamp: new Date().toISOString(),
+                status: status
+            };
+
+            if (isOffline) {
+                await addMutation({
+                    table: 'asistencias',
+                    type: 'upsert',
+                    id: `${eventId}-${costalero.id}`,
+                    data: newData
+                });
+
+                // Optimistic UI update
+                setAusentesList(prev => prev.filter(c => c.id !== costalero.id));
+
+                Alert.alert("Guardado Offline", "El cambio se sincronizará cuando vuelvas a tener internet.");
+                return;
+            }
+
             // Check if already registered
             const { data: existing, error: fetchError } = await supabase
                 .from('asistencias')
@@ -103,13 +128,7 @@ export default function PendingListScreen({ route, navigation }) {
             // Add new attendance record
             const { error: insertError } = await supabase
                 .from('asistencias')
-                .insert([{
-                    event_id: eventId,
-                    costalero_id: costalero.id,
-                    nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
-                    timestamp: new Date().toISOString(),
-                    status: status // 'presente' | 'justificado' | 'ausente'
-                }]);
+                .insert([newData]);
 
             if (insertError) throw insertError;
             Alert.alert("Actualizado", `Costalero marcado como ${status}`);
@@ -163,6 +182,21 @@ export default function PendingListScreen({ route, navigation }) {
                 <Text style={styles.headerText}>Total: {ausentesList.length} pendientes</Text>
                 <Text style={styles.subHeaderText}>Costaleros sin asistencia registrada</Text>
             </View>
+
+            {isOffline && (
+                <View style={styles.offlineBanner}>
+                    <MaterialIcons name="cloud-off" size={16} color="#B91C1C" />
+                    <Text style={styles.offlineText}>Modo Offline Activo</Text>
+                    {queueSize > 0 && <Text style={styles.queueText}>({queueSize} cambios pendientes)</Text>}
+                </View>
+            )}
+
+            {isSyncing && (
+                <View style={[styles.offlineBanner, { backgroundColor: '#DBEAFE' }]}>
+                    <MaterialIcons name="sync" size={16} color="#1E40AF" />
+                    <Text style={[styles.offlineText, { color: '#1E40AF' }]}>Sincronizando datos...</Text>
+                </View>
+            )}
 
             <FlatList
                 data={ausentesList}
@@ -370,5 +404,27 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         fontSize: 15,
         marginLeft: 10
+    },
+    // Offline Styles
+    offlineBanner: {
+        backgroundColor: '#FEE2E2',
+        paddingVertical: 6,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderBottomWidth: 1,
+        borderBottomColor: '#FECACA'
+    },
+    offlineText: {
+        color: '#B91C1C',
+        fontSize: 12,
+        fontWeight: '700',
+        marginLeft: 8
+    },
+    queueText: {
+        color: '#B91C1C',
+        fontSize: 11,
+        marginLeft: 4,
+        fontWeight: '500'
     }
 });

@@ -1,5 +1,8 @@
 import React, { createContext, useState, useEffect, useContext, useRef } from 'react';
-import { Alert, AppState } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { supabase } from '../supabaseConfig';
 import { useSeason } from './SeasonContext';
 
@@ -20,6 +23,8 @@ export const AuthProvider = ({ children }) => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (session?.user) {
                 await loadUserProfile();
+                // Solicitar permisos de notificación tras login exitoso
+                registerForPushNotifications(session.user.id);
             } else {
                 setUser(null);
                 setUserRole(null);
@@ -170,17 +175,75 @@ export const AuthProvider = ({ children }) => {
         setUserRole(null);
         setUserProfile(null);
     };
+    const registerForPushNotifications = async (userId) => {
+        try {
+            let token;
+            let platform = Platform.OS;
 
-    const value = {
-        user,
-        userRole,
-        userProfile,
-        loading,
-        signOut,
-        refreshProfile: loadUserProfile
+            if (Platform.OS === 'web') {
+                const registration = await navigator.serviceWorker.ready;
+                const permission = await Notification.requestPermission();
+
+                if (permission === 'granted') {
+                    const subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: 'BKe10MVFnn2jos1RJERocZ-nV18S9qdWJJfpRcEThxO1jsYCRDPPUodYfQP2lmcrV7GQ4kztfZ2cXDgIGFhmkaY'
+                    });
+                    token = JSON.stringify(subscription);
+                }
+            } else {
+                if (Device.isDevice) {
+                    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+                    let finalStatus = existingStatus;
+                    if (existingStatus !== 'granted') {
+                        const { status } = await Notifications.requestPermissionsAsync();
+                        finalStatus = status;
+                    }
+                    if (finalStatus !== 'granted') {
+                        console.log('Fallo al obtener el token para notificaciones push!');
+                        return;
+                    }
+                    token = (await Notifications.getExpoPushTokenAsync({
+                        projectId: Constants.expoConfig.extra.eas.projectId,
+                    })).data;
+                } else {
+                    console.log('Debes usar un dispositivo físico para notificaciones push nativas');
+                }
+            }
+
+            if (token) {
+                const { error } = await supabase
+                    .from('push_subscriptions')
+                    .upsert({
+                        user_id: userId,
+                        token: token,
+                        platform: Platform.OS === 'web' ? 'web' : 'native',
+                        device_info: {
+                            model: Device.modelName,
+                            os: Device.osName,
+                            version: Device.osVersion
+                        }
+                    }, { onConflict: 'user_id, token' });
+
+                if (error) console.error('Error guardando token push:', error);
+            }
+        } catch (error) {
+            console.error('Error en registro de notificaciones:', error);
+        }
     };
 
-    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    return (
+        <AuthContext.Provider value={{
+            user,
+            userRole,
+            userProfile,
+            loading,
+            signOut,
+            loadUserProfile
+        }}>
+            {children}
+        </AuthContext.Provider>
+    );
 };
 
 export const useAuth = () => {

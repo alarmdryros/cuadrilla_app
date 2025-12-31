@@ -6,12 +6,14 @@ import { MaterialIcons } from './components/Icon';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SeasonProvider } from './contexts/SeasonContext';
 import { NotificationProvider } from './contexts/NotificationContext';
+import { OfflineProvider } from './contexts/OfflineContext';
 
 // Screens
 import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import CostalerosListScreen from './screens/CostalerosListScreen';
 import CostaleroFormScreen from './screens/CostaleroFormScreen';
+import AnnouncementsScreen from './screens/AnnouncementsScreen';
 import EventsListScreen from './screens/EventsListScreen';
 import EventDetailScreen from './screens/EventDetailScreen';
 import EventFormScreen from './screens/EventFormScreen';
@@ -35,7 +37,8 @@ const linking = {
   prefixes: [prefix],
   config: {
     screens: {
-      Home: 'events',
+      Announcements: 'board',
+      EventsList: 'events',
       EventDetail: 'event/:eventId',
       Login: 'login',
       Register: 'register',
@@ -88,7 +91,7 @@ function AppNavigator() {
   return (
     <NavigationContainer linking={linking}>
       <Stack.Navigator
-        initialRouteName="Home"
+        initialRouteName="Announcements"
         screenOptions={({ navigation }) => ({
           headerTintColor: '#000000',
           headerBackTitleVisible: false,
@@ -105,7 +108,12 @@ function AppNavigator() {
       >
         {/* PANTALLAS PARA TODOS (Admin, Capataz, Costalero) */}
         <Stack.Screen
-          name="Home"
+          name="Announcements"
+          component={AnnouncementsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="EventsList"
           component={EventsListScreen}
           options={{ title: 'Cuadrilla App' }}
         />
@@ -199,9 +207,11 @@ export default function App() {
   return (
     <SeasonProvider>
       <AuthProvider>
-        <NotificationProvider>
-          <AppNavigator />
-        </NotificationProvider>
+        <OfflineProvider>
+          <NotificationProvider>
+            <AppNavigator />
+          </NotificationProvider>
+        </OfflineProvider>
       </AuthProvider>
     </SeasonProvider>
   );

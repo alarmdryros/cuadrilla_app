@@ -6,6 +6,8 @@ import { supabase } from '../supabaseConfig';
 
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useOffline } from '../contexts/OfflineContext';
+import { OfflineService } from '../services/OfflineService';
 
 export default function EventDetailScreen({ route, navigation }) {
     const { userRole, userProfile } = useAuth();
@@ -24,6 +26,7 @@ export default function EventDetailScreen({ route, navigation }) {
     const [absenceModalVisible, setAbsenceModalVisible] = useState(false);
     const [motivo, setMotivo] = useState('');
     const [sendingNotification, setSendingNotification] = useState(false);
+    const { isOffline, addMutation } = useOffline();
     const [managementModalVisible, setManagementModalVisible] = useState(false);
     const [selectedCostalero, setSelectedCostalero] = useState(null);
 
@@ -96,14 +99,21 @@ export default function EventDetailScreen({ route, navigation }) {
         if (!eventId) return;
 
         try {
-            // 1. Get Event Details
-            const { data: eventData, error: eventError } = await supabase
-                .from('eventos')
-                .select('*')
-                .eq('id', eventId)
-                .single();
+            // 1. Get Event Details from fetch or cache
+            let eventData = null;
+            if (!isOffline) {
+                const { data, error } = await supabase
+                    .from('eventos')
+                    .select('*')
+                    .eq('id', eventId)
+                    .single();
+                if (!error) eventData = data;
+            }
 
-            if (eventError) throw eventError;
+            if (!eventData) {
+                const cachedEvents = await OfflineService.getEvents();
+                eventData = cachedEvents.find(e => e.id === eventId);
+            }
 
             if (eventData) {
                 setEvent(eventData);
@@ -116,63 +126,64 @@ export default function EventDetailScreen({ route, navigation }) {
                 }
             }
 
-            // 2. Get All Costaleros (filtered by event's year to avoid duplicates from other seasons)
-            const { data: costalerosData, error: costalerosError } = await supabase
-                .from('costaleros')
-                .select('*')
-                .eq('año', eventData.año)
-                .order('apellidos');
+            // 2. Get All Costaleros
+            if (!isOffline) {
+                const { data: costalerosData, error: costalerosError } = await supabase
+                    .from('costaleros')
+                    .select('*')
+                    .eq('año', eventData?.año || new Date().getFullYear())
+                    .order('apellidos');
 
-            if (costalerosError) throw costalerosError;
-            setAllCostaleros(costalerosData || []);
+                if (!costalerosError) setAllCostaleros(costalerosData || []);
 
-            // 3. Get Asistencias
-            const { data: asisData, error: asisError } = await supabase
-                .from('asistencias')
-                .select('*')
-                .eq('event_id', eventId)
-                .order('timestamp', { ascending: false });
+                // 3. Get Asistencias
+                const { data: asisData, error: asisError } = await supabase
+                    .from('asistencias')
+                    .select('*')
+                    .eq('event_id', eventId)
+                    .order('timestamp', { ascending: false });
 
-            if (asisError) throw asisError;
-
-            // Deduplicate: If there are multiple records for the same costalero, keep the most recent one
-            const uniqueAsisMap = (asisData || []).reduce((acc, a) => {
-                const cId = a.costalero_id || a.costaleroId;
-                if (!acc[cId] || new Date(a.timestamp) > new Date(acc[cId].timestamp)) {
-                    acc[cId] = a;
+                if (!asisError) {
+                    processAsistenciasLocal(asisData, costalerosData);
                 }
-                return acc;
-            }, {});
-            const uniqueAsisData = Object.values(uniqueAsisMap);
-
-            // Enrich and sort asistencias
-            const costaleroMap = (costalerosData || []).reduce((acc, c) => {
-                acc[c.id] = c;
-                return acc;
-            }, {});
-
-            const processedAsistencias = uniqueAsisData.map(a => {
-                const costalero = costaleroMap[a.costalero_id || a.costaleroId];
-                return {
-                    ...a,
-                    trabajadera: costalero ? costalero.trabajadera : null,
-                    apellidos: costalero ? costalero.apellidos : ''
-                };
-            }).sort((a, b) => {
-                const tA = a.trabajadera ? parseInt(a.trabajadera) : 999;
-                const tB = b.trabajadera ? parseInt(b.trabajadera) : 999;
-                if (tA !== tB) return tA - tB;
-                return (a.nombreCostalero || '').localeCompare(b.nombreCostalero || '');
-            });
-
-            setAsistencias(processedAsistencias);
-
+            }
         } catch (error) {
             console.error(error);
-            // Alert.alert("Error loading data", error.message);
         } finally {
             setLoading(false);
         }
+    };
+
+    const processAsistenciasLocal = (asisData, costalerosData) => {
+        const uniqueAsisMap = (asisData || []).reduce((acc, a) => {
+            const cId = a.costalero_id || a.costaleroId;
+            if (!acc[cId] || new Date(a.timestamp) > new Date(acc[cId].timestamp)) {
+                acc[cId] = a;
+            }
+            return acc;
+        }, {});
+        const uniqueAsisData = Object.values(uniqueAsisMap);
+
+        const costaleroMap = (costalerosData || []).reduce((acc, c) => {
+            acc[c.id] = c;
+            return acc;
+        }, {});
+
+        const processedAsistencias = uniqueAsisData.map(a => {
+            const costalero = costaleroMap[a.costalero_id || a.costaleroId];
+            return {
+                ...a,
+                trabajadera: costalero ? costalero.trabajadera : null,
+                apellidos: costalero ? costalero.apellidos : ''
+            };
+        }).sort((a, b) => {
+            const tA = a.trabajadera ? parseInt(a.trabajadera) : 999;
+            const tB = b.trabajadera ? parseInt(b.trabajadera) : 999;
+            if (tA !== tB) return tA - tB;
+            return (a.nombreCostalero || '').localeCompare(b.nombreCostalero || '');
+        });
+
+        setAsistencias(processedAsistencias);
     };
 
     useFocusEffect(
@@ -314,6 +325,12 @@ export default function EventDetailScreen({ route, navigation }) {
     const deleteAsistencia = async (attendanceId) => {
         if (!isManagement) return;
         try {
+            if (isOffline) {
+                // For now, simpler queueing for delete might be complex as we need ID
+                // For simplicity, we only allow additions/updates in offline mode for now
+                Alert.alert("Offline", "La eliminación de asistencias requiere conexión.");
+                return;
+            }
             const { error } = await supabase
                 .from('asistencias')
                 .delete()
@@ -330,6 +347,32 @@ export default function EventDetailScreen({ route, navigation }) {
     const addAsistencia = async (costalero, status) => {
         if (!isManagement) return;
         try {
+            const newData = {
+                event_id: eventId,
+                costalero_id: costalero.id,
+                nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
+                timestamp: new Date().toISOString(),
+                status: status
+            };
+
+            if (isOffline) {
+                await addMutation({
+                    table: 'asistencias',
+                    type: 'upsert',
+                    id: `${eventId}-${costalero.id}`,
+                    data: newData
+                });
+
+                // Optimistic UI update
+                setAsistencias(prev => {
+                    const filtered = prev.filter(a => (a.costalero_id || a.costaleroId) !== costalero.id);
+                    return [...filtered, newData];
+                });
+
+                Alert.alert("Guardado Offline", "El cambio se sincronizará cuando vuelvas a tener internet.");
+                return;
+            }
+
             // Check if already registered
             const { data: existing, error: fetchError } = await supabase
                 .from('asistencias')
@@ -350,13 +393,7 @@ export default function EventDetailScreen({ route, navigation }) {
             // Add new attendance record
             const { error: insertError } = await supabase
                 .from('asistencias')
-                .insert([{
-                    event_id: eventId,
-                    costalero_id: costalero.id,
-                    nombreCostalero: `${costalero.nombre} ${costalero.apellidos}`,
-                    timestamp: new Date().toISOString(),
-                    status: status // 'presente' | 'justificado' | 'ausente'
-                }]);
+                .insert([newData]);
 
             if (insertError) throw insertError;
             Alert.alert("Actualizado", `Costalero marcado como ${status}`);
