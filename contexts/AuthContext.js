@@ -176,60 +176,8 @@ export const AuthProvider = ({ children }) => {
         setUserProfile(null);
     };
     const registerForPushNotifications = async (userId) => {
-        try {
-            let token;
-            let platform = Platform.OS;
-
-            if (Platform.OS === 'web') {
-                const registration = await navigator.serviceWorker.ready;
-                const permission = await Notification.requestPermission();
-
-                if (permission === 'granted') {
-                    const subscription = await registration.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: 'BKe10MVFnn2jos1RJERocZ-nV18S9qdWJJfpRcEThxO1jsYCRDPPUodYfQP2lmcrV7GQ4kztfZ2cXDgIGFhmkaY'
-                    });
-                    token = JSON.stringify(subscription);
-                }
-            } else {
-                if (Device.isDevice) {
-                    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-                    let finalStatus = existingStatus;
-                    if (existingStatus !== 'granted') {
-                        const { status } = await Notifications.requestPermissionsAsync();
-                        finalStatus = status;
-                    }
-                    if (finalStatus !== 'granted') {
-                        console.log('Fallo al obtener el token para notificaciones push!');
-                        return;
-                    }
-                    token = (await Notifications.getExpoPushTokenAsync({
-                        projectId: Constants.expoConfig.extra.eas.projectId,
-                    })).data;
-                } else {
-                    console.log('Debes usar un dispositivo físico para notificaciones push nativas');
-                }
-            }
-
-            if (token) {
-                const { error } = await supabase
-                    .from('push_subscriptions')
-                    .upsert({
-                        user_id: userId,
-                        token: token,
-                        platform: Platform.OS === 'web' ? 'web' : 'native',
-                        device_info: {
-                            model: Device.modelName,
-                            os: Device.osName,
-                            version: Device.osVersion
-                        }
-                    }, { onConflict: 'user_id, token' });
-
-                if (error) console.error('Error guardando token push:', error);
-            }
-        } catch (error) {
-            console.error('Error en registro de notificaciones:', error);
-        }
+        // Notificaciones desactivadas por solicitud del usuario
+        return;
     };
 
     return (

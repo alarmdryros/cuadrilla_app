@@ -1,17 +1,17 @@
 /*
-* Service Worker para Cuadrilla App (PWA)
+* Service Worker para Cuadrilla App (PWA) v2.4.2
 * Maneja las notificaciones push en segundo plano.
 */
 
 self.addEventListener('push', function (event) {
     console.log('[Service Worker] Push Received.');
 
-    let data = { title: 'Cuadrilla App', body: 'Nueva actualización' };
+    let data = { title: 'Nuevo Anuncio', body: 'Tienes un nuevo aviso en el tablón.' };
     if (event.data) {
         try {
             data = event.data.json();
         } catch (e) {
-            data = { title: 'Cuadrilla App', body: event.data.text() };
+            data = { title: 'Nuevo Anuncio', body: event.data.text() };
         }
     }
 
