@@ -201,7 +201,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
                             <MaterialIcons name="logout" size={20} color="#D32F2F" />
                             <Text style={styles.logoutText}>Cerrar Sesión</Text>
                         </TouchableOpacity>
-                        <Text style={styles.versionText}>v2.4.0</Text>
+                        <Text style={styles.versionText}>v2.4.1</Text>
                     </View>
                 </View>
             </TouchableOpacity>
