@@ -1,5 +1,5 @@
+import React, { useState } from 'react';
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
 
@@ -7,7 +7,7 @@ export default function RegisterScreen({ navigation }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [role, setRole] = useState('costalero');
+
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -54,9 +54,10 @@ export default function RegisterScreen({ navigation }) {
                 email: email.toLowerCase().trim(),
                 password: password,
                 options: {
+                    emailRedirectTo: 'https://cuadrillaapp.vercel.app',
                     data: {
                         costalero_id: costalero.id,
-                        role: role // Pass selected role to trigger
+                        role: 'costalero' // Default role, changed by SuperAdmin if needed
                     }
                 }
             });
@@ -143,18 +144,7 @@ export default function RegisterScreen({ navigation }) {
                     editable={!loading}
                 />
 
-                <View style={styles.pickerContainer}>
-                    <Text style={styles.label}>Rol Solicitado:</Text>
-                    <Picker
-                        selectedValue={role}
-                        onValueChange={(itemValue) => setRole(itemValue)}
-                        style={styles.picker}
-                    >
-                        <Picker.Item label="Costalero" value="costalero" />
-                        <Picker.Item label="Auxiliar" value="auxiliar" />
-                        <Picker.Item label="Capataz" value="capataz" />
-                    </Picker>
-                </View>
+
 
                 <View style={styles.passwordContainer}>
                     <TextInput

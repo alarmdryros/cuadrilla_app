@@ -4,12 +4,10 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { supabase } from '../supabaseConfig';
 import { MaterialIcons } from '../components/Icon';
 import { useSeason } from '../contexts/SeasonContext';
-import { NotificationService } from '../services/NotificationService';
 
 export default function EventFormScreen({ navigation, route }) {
     const { eventData } = route.params || {};
-    const { currentYear } = useSeason();
-
+    const { selectedYear } = useSeason();
     const [nombre, setNombre] = useState(eventData?.nombre || '');
     const [lugar, setLugar] = useState(eventData?.lugar || '');
     const [fechaInicio, setFechaInicio] = useState(eventData?.fechaInicio ? new Date(eventData.fechaInicio) : new Date());
@@ -60,7 +58,7 @@ export default function EventFormScreen({ navigation, route }) {
                 fechaInicio: fechaInicio.toISOString(),
                 fechaFin: fechaFin.toISOString(),
                 fecha: fechaInicio.toISOString(), // Legacy support
-                año: fechaInicio.getFullYear(),
+                año: selectedYear,
                 updatedAt: new Date().toISOString()
             };
 
@@ -72,10 +70,6 @@ export default function EventFormScreen({ navigation, route }) {
 
                 if (error) throw error;
                 Alert.alert("✅ Actualizado", "Evento modificado correctamente");
-
-                // Reschedule notifications (cancel old logic and set new)
-                await NotificationService.cancelEventReminders(eventData.id);
-                NotificationService.scheduleEventReminder(eventData.id, nombre, fechaInicio);
             } else {
                 dataToSave.createdAt = new Date().toISOString();
                 const { error } = await supabase
@@ -84,19 +78,6 @@ export default function EventFormScreen({ navigation, route }) {
 
                 if (error) throw error;
                 Alert.alert("✅ Creado", "Evento creado correctamente");
-
-                // Schedule notifications for new event
-                // Need to get the ID if it's a new insert
-                const { data: newEvent } = await supabase
-                    .from('eventos')
-                    .select('id')
-                    .eq('nombre', nombre)
-                    .eq('fechaInicio', fechaInicio.toISOString())
-                    .single();
-
-                if (newEvent) {
-                    NotificationService.scheduleEventReminder(newEvent.id, nombre, fechaInicio);
-                }
             }
             navigation.goBack();
         } catch (e) {
@@ -298,7 +279,7 @@ const styles = StyleSheet.create({
     datePickerCard: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#F5F5F5', // tarjeta gris suave
+        backgroundColor: '#F5F5F5',
         paddingVertical: 14,
         paddingHorizontal: 16,
         borderRadius: 12,

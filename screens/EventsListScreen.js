@@ -6,7 +6,6 @@ import { supabase } from '../supabaseConfig';
 import { MaterialIcons } from '../components/Icon';
 import { useAuth } from '../contexts/AuthContext';
 import { useSeason } from '../contexts/SeasonContext';
-import { useNotifications } from '../contexts/NotificationContext';
 import { useOffline } from '../contexts/OfflineContext';
 import { OfflineService } from '../services/OfflineService';
 import SideMenu from '../components/SideMenu';
@@ -20,7 +19,6 @@ export default function EventsListScreen({ navigation }) {
     const [filteredEventos, setFilteredEventos] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [currentTime, setCurrentTime] = useState(new Date());
-    const { unreadCount } = useNotifications();
     const { isOffline, isSyncing, queueSize } = useOffline();
 
     const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
@@ -135,26 +133,24 @@ export default function EventsListScreen({ navigation }) {
 
     React.useLayoutEffect(() => {
         navigation.setOptions({
+            headerTitle: () => (
+                <View style={{ alignItems: 'center' }}>
+                    <Text style={{ fontSize: 17, fontWeight: '700', color: '#212121' }}>Agenda de Eventos</Text>
+                    <Text style={{ fontSize: 11, color: '#757575', fontWeight: '600', marginTop: 2 }}>
+                        Temporada {selectedYear}
+                    </Text>
+                </View>
+            ),
             headerLeft: () => (
-                <TouchableOpacity onPress={() => setMenuVisible(true)} style={{ marginLeft: 0, marginRight: 16 }}>
-                    <MaterialIcons name="menu" size={28} color="#212121" />
+                <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginLeft: 8, padding: 8 }}>
+                    <MaterialIcons name="arrow-back" size={26} color="#212121" />
                 </TouchableOpacity>
             ),
-            headerRight: () => isManagement ? (
-                <TouchableOpacity
-                    onPress={() => navigation.navigate('NotificationsList')}
-                    style={{ marginRight: 32, position: 'relative', paddingRight: 4 }}
-                >
-                    <MaterialIcons name="notifications-none" size={26} color="#424242" />
-                    {unreadCount > 0 && (
-                        <View style={styles.badge}>
-                            <Text style={styles.badgeText}>{unreadCount > 9 ? '9+' : unreadCount}</Text>
-                        </View>
-                    )}
-                </TouchableOpacity>
-            ) : null,
+            headerTitleAlign: 'center',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: '#FAFAFA' }
         });
-    }, [navigation, unreadCount, isManagement]);
+    }, [navigation, isManagement, selectedYear]);
 
     const navigateAndClose = (screen, params = {}) => {
         setMenuVisible(false);
@@ -212,7 +208,14 @@ export default function EventsListScreen({ navigation }) {
                 ListEmptyComponent={EmptyComponent}
             />
 
-            {/* El menú lateral ahora se gestiona a través del componente SideMenu compartido */}
+            {isManagement && (
+                <TouchableOpacity
+                    style={styles.fab}
+                    onPress={() => navigation.navigate('EventForm')}
+                >
+                    <MaterialIcons name="add" size={30} color="white" />
+                </TouchableOpacity>
+            )}
         </View>
     );
 }
@@ -316,26 +319,6 @@ const styles = StyleSheet.create({
         textTransform: 'uppercase',
         letterSpacing: 0.5
     },
-    badge: {
-        position: 'absolute',
-        right: 0,
-        top: 3,
-        backgroundColor: '#D32F2F',
-        borderRadius: 9,
-        width: 18,
-        height: 18,
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 1.5,
-        borderColor: 'white',
-        zIndex: 100,
-        elevation: 5
-    },
-    badgeText: {
-        color: 'white',
-        fontSize: 9,
-        fontWeight: 'bold'
-    },
     // Offline Styles
     offlineBanner: {
         backgroundColor: '#FEE2E2',
@@ -357,5 +340,22 @@ const styles = StyleSheet.create({
         fontSize: 11,
         marginLeft: 4,
         fontWeight: '500'
-    }
+    },
+    fab: {
+        position: 'absolute',
+        width: 60,
+        height: 60,
+        alignItems: 'center',
+        justifyContent: 'center',
+        right: 20,
+        bottom: 30,
+        backgroundColor: '#5E35B1',
+        borderRadius: 30,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10,
+        elevation: 10,
+        zIndex: 999,
+    },
 });

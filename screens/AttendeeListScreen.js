@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, SectionList, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, SectionList, ActivityIndicator, TouchableOpacity, Alert, Modal } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../supabaseConfig';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,11 +10,13 @@ export default function AttendeeListScreen({ route, navigation }) {
     const { userRole } = useAuth();
     const { eventId, eventName } = route.params || {};
 
-    const isManagement = userRole === 'admin' || userRole === 'capataz';
+    const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
     const [sections, setSections] = useState([]);
     const [loading, setLoading] = useState(true);
-    const { isOffline, isSyncing, queueSize } = useOffline();
+    const [managementModalVisible, setManagementModalVisible] = useState(false);
+    const [selectedCostalero, setSelectedCostalero] = useState(null);
+    const { isOffline, isSyncing, queueSize, addMutation } = useOffline();
 
     const fetchAsistencias = async () => {
         if (!eventId) return;
@@ -119,6 +121,46 @@ export default function AttendeeListScreen({ route, navigation }) {
         });
     }, [navigation, eventName]);
 
+    const updateAsistencia = async (costalero, status) => {
+        if (!isManagement) return;
+        try {
+            const newData = {
+                event_id: eventId,
+                costalero_id: costalero.costalero_id || costalero.costaleroId,
+                nombreCostalero: costalero.nombreCostalero,
+                timestamp: new Date().toISOString(),
+                status: status
+            };
+
+            if (isOffline) {
+                await addMutation({
+                    table: 'asistencias',
+                    type: 'upsert',
+                    id: costalero.id || `${eventId}-${newData.costalero_id}`,
+                    data: newData
+                });
+                Alert.alert("Guardado Offline", "El cambio se sincronizará cuando vuelvas a tener internet.");
+                fetchAsistencias();
+                return;
+            }
+
+            const { error } = await supabase
+                .from('asistencias')
+                .upsert([
+                    {
+                        id: costalero.id,
+                        ...newData
+                    }
+                ]);
+
+            if (error) throw error;
+            Alert.alert("Actualizado", `Estado cambiado a ${status.toUpperCase()}`);
+            fetchAsistencias();
+        } catch (e) {
+            Alert.alert("Error", e.message);
+        }
+    };
+
     const deleteAsistencia = async (attendanceId) => {
         if (!isManagement) return;
         try {
@@ -160,18 +202,8 @@ export default function AttendeeListScreen({ route, navigation }) {
 
     const handleExistingAction = (item) => {
         if (!isManagement) return;
-        Alert.alert(
-            "Gestionar Asistencia",
-            `${item.nombreCostalero}`,
-            [
-                { text: "Cancelar", style: "cancel" },
-                {
-                    text: "🗑️ Eliminar Asistencia",
-                    style: 'destructive',
-                    onPress: () => deleteAsistencia(item.id)
-                }
-            ]
-        );
+        setSelectedCostalero(item);
+        setManagementModalVisible(true);
     };
 
     const getBadgeStyles = (status) => {
@@ -198,12 +230,12 @@ export default function AttendeeListScreen({ route, navigation }) {
                 <View style={{ flex: 1 }}>
                     <View style={styles.nameRow}>
                         <Text style={styles.name}>{item.nombreCostalero}</Text>
-                        {item.trabajadera && (
+                        {!!item.trabajadera && (
                             <View style={[styles.badge, { backgroundColor: bg, borderColor: border }]}>
                                 <Text style={[styles.badgeText, { color: text }]}>T{item.trabajadera}</Text>
                             </View>
                         )}
-                        {item.suplemento && (
+                        {!!item.suplemento && (
                             <Text style={styles.suplementoText}>({item.suplemento} cm)</Text>
                         )}
                     </View>
@@ -277,9 +309,99 @@ export default function AttendeeListScreen({ route, navigation }) {
                 stickySectionHeadersEnabled={true}
                 ListEmptyComponent={<Text style={styles.empty}>No hay asistentes registrados.</Text>}
             />
+
+            {/* Modal de Gestión de Asistencia */}
+            <Modal
+                visible={managementModalVisible}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setManagementModalVisible(false)}
+            >
+                <View style={styles.modalContainer}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Gestionar Asistencia</Text>
+                        <Text style={styles.modalSubtitle}>
+                            {selectedCostalero?.nombreCostalero}
+                        </Text>
+
+                        <TouchableOpacity
+                            style={[styles.actionBtn, { backgroundColor: '#4CAF50', marginBottom: 12 }]}
+                            onPress={() => {
+                                updateAsistencia(selectedCostalero, 'presente');
+                                setManagementModalVisible(false);
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="check-circle" size={24} color="white" />
+                                <Text style={styles.btnText}>MARCAR PRESENTE</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.actionBtn, { backgroundColor: '#FF9800', marginBottom: 12 }]}
+                            onPress={() => {
+                                updateAsistencia(selectedCostalero, 'justificado');
+                                setManagementModalVisible(false);
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="event-available" size={24} color="white" />
+                                <Text style={styles.btnText}>JUSTIFICAR FALTA</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.actionBtn, { backgroundColor: '#F44336', marginBottom: 12 }]}
+                            onPress={() => {
+                                updateAsistencia(selectedCostalero, 'ausente');
+                                setManagementModalVisible(false);
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="cancel" size={24} color="white" />
+                                <Text style={styles.btnText}>MARCAR AUSENTE</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.actionBtn, { backgroundColor: '#D32F2F', marginBottom: 24 }]}
+                            onPress={() => {
+                                Alert.alert(
+                                    "Eliminar Registro",
+                                    "¿Estás seguro de que quieres eliminar esta asistencia por completo?",
+                                    [
+                                        { text: "Cancelar", style: "cancel" },
+                                        {
+                                            text: "Eliminar",
+                                            style: 'destructive',
+                                            onPress: () => {
+                                                deleteAsistencia(selectedCostalero.id);
+                                                setManagementModalVisible(false);
+                                            }
+                                        }
+                                    ]
+                                );
+                            }}
+                        >
+                            <View style={styles.btnContent}>
+                                <MaterialIcons name="delete" size={24} color="white" />
+                                <Text style={styles.btnText}>ELIMINAR ASISTENCIA</Text>
+                            </View>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={[styles.actionBtn, { backgroundColor: '#BDBDBD' }]}
+                            onPress={() => setManagementModalVisible(false)}
+                        >
+                            <Text style={styles.btnText}>CANCELAR</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </Modal>
         </View>
     );
 }
+
 
 const styles = StyleSheet.create({
     container: {
@@ -429,6 +551,52 @@ const styles = StyleSheet.create({
         marginTop: 60,
         color: '#9E9E9E',
         fontSize: 16
+    },
+    // Modal Styles
+    modalContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        padding: 20
+    },
+    modalContent: {
+        backgroundColor: 'white',
+        borderRadius: 20,
+        padding: 24,
+        width: '100%',
+        maxWidth: 400
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#212121',
+        marginBottom: 8,
+        textAlign: 'center'
+    },
+    modalSubtitle: {
+        fontSize: 16,
+        color: '#5E35B1',
+        fontWeight: '600',
+        marginBottom: 24,
+        textAlign: 'center'
+    },
+    actionBtn: {
+        width: '100%',
+        paddingVertical: 14,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    btnContent: {
+        flexDirection: 'row',
+        alignItems: 'center'
+    },
+    btnText: {
+        color: 'white',
+        fontWeight: '800',
+        fontSize: 15,
+        marginLeft: 10
     },
     // Offline Styles
     offlineBanner: {

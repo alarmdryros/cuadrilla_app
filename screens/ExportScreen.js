@@ -11,7 +11,28 @@ import { useSeason } from '../contexts/SeasonContext';
 
 export default function ExportScreen() {
     const [loading, setLoading] = useState(false);
+    const [events, setEvents] = useState([]);
+    const [showEventSelector, setShowEventSelector] = useState(false);
     const { selectedYear } = useSeason();
+
+    React.useEffect(() => {
+        fetchEvents();
+    }, [selectedYear]);
+
+    const fetchEvents = async () => {
+        try {
+            const { data, error } = await supabase
+                .from('eventos')
+                .select('*')
+                .eq('año', selectedYear)
+                .order('fecha', { ascending: false });
+
+            if (error) throw error;
+            setEvents(data || []);
+        } catch (error) {
+            console.error('Error fetching events:', error);
+        }
+    };
 
     const generateCSV = (headers, rows) => {
         const csvHeaders = headers.join(',');
@@ -640,9 +661,17 @@ export default function ExportScreen() {
         }
     };
 
-    const exportDetailedAttendanceXLSX = async () => {
+    const handleExcelExport = (eventId = null) => {
+        setShowEventSelector(false);
+        exportDetailedAttendanceXLSX(eventId);
+    };
+
+    const exportDetailedAttendanceXLSX = async (specificEventId = null) => {
         setLoading(true);
         try {
+            // 0. Find specific event if needed
+            const specificEvent = specificEventId ? events.find(e => e.id === specificEventId) : null;
+
             // 1. Fetch all data
             const { data: costaleros } = await supabase
                 .from('costaleros')
@@ -651,60 +680,61 @@ export default function ExportScreen() {
                 .order('trabajadera', { ascending: true })
                 .order('apellidos', { ascending: true });
 
-            const { data: events } = await supabase
-                .from('eventos')
-                .select('*')
-                .eq('año', selectedYear)
-                .order('fecha', { ascending: true });
+            const eventsToExport = specificEventId
+                ? [specificEvent]
+                : events.sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
 
-            const eventIds = events.map(e => e.id);
+            const eventIds = eventsToExport.filter(e => e).map(e => e.id);
+            if (eventIds.length === 0) {
+                Alert.alert("Aviso", "No hay eventos seleccionados para exportar.");
+                return;
+            }
+
             const { data: allAsis } = await supabase
                 .from('asistencias')
                 .select('*')
                 .in('event_id', eventIds);
 
-            if (!events || events.length === 0) {
-                Alert.alert("Aviso", "No hay eventos registrados en esta temporada.");
-                return;
-            }
-
             // 2. Create Workbook
             const wb = XLSX.utils.book_new();
 
-            // 2.1 CREATE MASTER DATA SHEET (for Pivot Tables)
-            const masterData = [
-                ['Evento', 'Fecha', 'Trabajadera', 'Costalero', 'Puesto', 'Estado']
-            ];
+            // 2.1 CREATE MASTER DATA SHEET (for Pivot Tables) - Only for Collective
+            if (!specificEventId) {
+                const masterData = [
+                    ['Evento', 'Fecha', 'Trabajadera', 'Costalero', 'Puesto', 'Estado']
+                ];
 
-            events.forEach(event => {
-                const eventAsis = (allAsis || []).filter(a => a.event_id === event.id);
-                const uniqueAsisMap = eventAsis.reduce((acc, a) => {
-                    if (!acc[a.costalero_id] || new Date(a.timestamp) > new Date(acc[a.costalero_id].timestamp)) {
-                        acc[a.costalero_id] = a;
-                    }
-                    return acc;
-                }, {});
+                eventsToExport.forEach(event => {
+                    const eventAsis = (allAsis || []).filter(a => a.event_id === event.id);
+                    const uniqueAsisMap = eventAsis.reduce((acc, a) => {
+                        if (!acc[a.costalero_id] || new Date(a.timestamp) > new Date(acc[a.costalero_id].timestamp)) {
+                            acc[a.costalero_id] = a;
+                        }
+                        return acc;
+                    }, {});
 
-                costaleros.forEach(c => {
-                    const attendance = uniqueAsisMap[c.id];
-                    const status = attendance ? (attendance.status?.toUpperCase() || 'PRESENTE') : 'SIN REGISTRO';
+                    costaleros.forEach(c => {
+                        const attendance = uniqueAsisMap[c.id];
+                        const status = attendance ? (attendance.status?.toUpperCase() || 'PRESENTE') : 'SIN REGISTRO';
 
-                    masterData.push([
-                        event.nombre || '',
-                        event.fecha ? new Date(event.fecha).toLocaleDateString() : '',
-                        c.trabajadera || '-',
-                        `${c.nombre} ${c.apellidos}`,
-                        c.puesto || '-',
-                        status
-                    ]);
+                        masterData.push([
+                            event.nombre || '',
+                            event.fecha ? new Date(event.fecha).toLocaleDateString() : '',
+                            c.trabajadera || '-',
+                            `${c.nombre} ${c.apellidos}`,
+                            c.puesto || '-',
+                            status
+                        ]);
+                    });
                 });
-            });
 
-            const wsMaster = XLSX.utils.aoa_to_sheet(masterData);
-            XLSX.utils.book_append_sheet(wb, wsMaster, "BASE_DE_DATOS");
+                const wsMaster = XLSX.utils.aoa_to_sheet(masterData);
+                XLSX.utils.book_append_sheet(wb, wsMaster, "BASE_DE_DATOS");
+            }
 
             // 2.2 CREATE INDIVIDUAL EVENT SHEETS
-            events.forEach(event => {
+            eventsToExport.forEach(event => {
+                if (!event) return;
                 const eventAsis = (allAsis || []).filter(a => a.event_id === event.id);
                 // Deduplicate attendance
                 const uniqueAsisMap = eventAsis.reduce((acc, a) => {
@@ -738,10 +768,10 @@ export default function ExportScreen() {
                 // Create worksheet
                 const ws = XLSX.utils.aoa_to_sheet(wsData);
 
-                // Sanitize sheet name (max 31 chars, no invalid chars : / \ ? * [ ])
+                // Sanitize sheet name
                 let sheetName = (event.nombre || 'Evento').substring(0, 31).replace(/[\[\]\*\?\/\\:]/g, ' ');
 
-                // Ensure unique sheet names (if multiple events have same name or sanitized name)
+                // Ensure unique sheet names
                 let finalName = sheetName;
                 let counter = 1;
                 while (wb.SheetNames.includes(finalName)) {
@@ -755,7 +785,9 @@ export default function ExportScreen() {
             const wbout = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
 
             // 4. Save and Share
-            const fileName = `libro_actas_detallado_${selectedYear}.xlsx`;
+            const eventNamePart = specificEvent ? specificEvent.nombre.replace(/\s+/g, '_') : 'DETALLADO';
+            const datePart = specificEvent && specificEvent.fecha ? specificEvent.fecha.split('T')[0] : selectedYear;
+            const fileName = `Libro_Actas_${eventNamePart}_${datePart}.xlsx`;
             const fileUri = `${FileSystem.documentDirectory}${fileName}`;
 
             await FileSystem.writeAsStringAsync(fileUri, wbout, {
@@ -767,7 +799,7 @@ export default function ExportScreen() {
                 mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             });
 
-            Alert.alert('Éxito', 'Excel generado correctamente con una hoja por evento.');
+            Alert.alert('Éxito', specificEventId ? `Excel de "${specificEvent.nombre}" generado.` : 'Excel generado correctamente con una hoja por evento.');
 
         } catch (error) {
             console.error(error);
@@ -828,76 +860,124 @@ export default function ExportScreen() {
     );
 
     return (
-        <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
-            <View style={styles.header}>
-                <Text style={styles.title}>Exportar Datos</Text>
-                <View style={styles.seasonBadge}>
-                    <MaterialIcons name="event" size={16} color="#5E35B1" />
-                    <Text style={styles.seasonText}>TEMPORADA {selectedYear}</Text>
+        <View style={{ flex: 1 }}>
+            <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+                <View style={styles.header}>
+                    <Text style={styles.title}>Exportar Datos</Text>
+                    <View style={styles.seasonBadge}>
+                        <MaterialIcons name="event" size={16} color="#5E35B1" />
+                        <Text style={styles.seasonText}>TEMPORADA {selectedYear}</Text>
+                    </View>
                 </View>
-            </View>
 
-            <ExportCard
-                icon="people"
-                title="Lista de Costaleros"
-                description="Listado completo con teléfono, email, altura y trabajadera."
-                btnText="Exportar CSV"
-                onPress={exportCostaleros}
-            />
+                <ExportCard
+                    icon="people"
+                    title="Lista de Costaleros"
+                    description="Listado completo con teléfono, email, altura y trabajadera."
+                    btnText="Exportar CSV"
+                    onPress={exportCostaleros}
+                />
 
-            <ExportCard
-                icon="grid-on"
-                title="Matriz de Asistencia"
-                description="Cuadrante completo con todos los eventos y la asistencia de cada costalero."
-                btnText="Generar Matriz"
-                color="#2E7D32"
-                onPress={exportAttendanceMatrix}
-            />
+                <ExportCard
+                    icon="grid-on"
+                    title="Matriz de Asistencia"
+                    description="Cuadrante completo con todos los eventos y la asistencia de cada costalero."
+                    btnText="Generar Matriz"
+                    color="#2E7D32"
+                    onPress={exportAttendanceMatrix}
+                />
 
-            <ExportCard
-                icon="assignment"
-                title="Resumen de Eventos"
-                description="Estadísticas de asistencia, totales y porcentajes por cada evento."
-                btnText="Exportar Resumen"
-                color="#F57C00"
-                onPress={exportAllEvents}
-            />
+                <ExportCard
+                    icon="assignment"
+                    title="Resumen de Eventos"
+                    description="Estadísticas de asistencia, totales y porcentajes por cada evento."
+                    btnText="Exportar Resumen"
+                    color="#F57C00"
+                    onPress={exportAllEvents}
+                />
 
-            <ExportCard
-                icon="table-chart"
-                title="Libro de Actas (Excel)"
-                description="Reporte avanzado: Una hoja individual para cada evento, con puestos y estados detallados."
-                btnText="Exportar Excel"
-                color="#2E7D32"
-                onPress={exportDetailedAttendanceXLSX}
-            />
+                <ExportCard
+                    icon="table-chart"
+                    title="Libro de Actas (Excel)"
+                    description="Reporte avanzado: Elige un evento específico o genera el informe colectivo de toda la temporada."
+                    btnText="Exportar Excel"
+                    color="#2E7D32"
+                    onPress={() => setShowEventSelector(true)}
+                />
 
-            <ExportCard
-                icon="menu-book"
-                title="Libro de Actas Detallado (PDF)"
-                description="Listado completo de cada evento en páginas individuales con puestos y estados."
-                btnText="Descargar Informe"
-                color="#5E35B1"
-                onPress={exportDetailedAttendanceReport}
-            />
+                <ExportCard
+                    icon="menu-book"
+                    title="Libro de Actas Detallado (PDF)"
+                    description="Listado completo de cada evento en páginas individuales con puestos y estados."
+                    btnText="Descargar Informe"
+                    color="#5E35B1"
+                    onPress={exportDetailedAttendanceReport}
+                />
 
-            <ExportCard
-                icon="assessment"
-                title="Informe Avanzado (PDF)"
-                description="Reporte profesional con gráficos, promedios y resumen detallado de la temporada."
-                btnText="Descargar PDF"
-                color="#673AB7"
-                onPress={exportAdvancedSeasonReport}
-            />
+                <ExportCard
+                    icon="assessment"
+                    title="Informe Avanzado (PDF)"
+                    description="Reporte profesional con gráficos, promedios y resumen detallado de la temporada."
+                    btnText="Descargar PDF"
+                    color="#673AB7"
+                    onPress={exportAdvancedSeasonReport}
+                />
 
-            <ExportCard
-                icon="qr-code-2"
-                title="Fichas QR para Imprimir"
-                description="Genera un PDF con los códigos QR de todos los costaleros listos para recortar."
-                btnText="Descargar PDF"
-                color="#D32F2F"
-                onPress={printQRReport}
-            />
+                <ExportCard
+                    icon="qr-code-2"
+                    title="Fichas QR para Imprimir"
+                    description="Genera un PDF con los códigos QR de todos los costaleros listos para recortar."
+                    btnText="Descargar PDF"
+                    color="#D32F2F"
+                    onPress={printQRReport}
+                />
+
+                <View style={styles.footerInfo}>
+                    <MaterialIcons name="info-outline" size={20} color="#757575" />
+                    <Text style={styles.footerText}>
+                        Los archivos CSV se pueden abrir directamente en Google Sheets o Excel para su edición profesional.
+                    </Text>
+                </View>
+            </ScrollView>
+
+            {showEventSelector && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Seleccionar Evento</Text>
+                            <TouchableOpacity onPress={() => setShowEventSelector(false)}>
+                                <MaterialIcons name="close" size={24} color="#757575" />
+                            </TouchableOpacity>
+                        </View>
+                        <ScrollView style={styles.eventList}>
+                            <TouchableOpacity
+                                style={[styles.eventItem, { borderLeftColor: '#2E7D32', borderLeftWidth: 4 }]}
+                                onPress={() => handleExcelExport(null)}
+                            >
+                                <View>
+                                    <Text style={[styles.eventName, { color: '#2E7D32' }]}>INFORME COLECTIVO</Text>
+                                    <Text style={styles.eventDate}>Toda la temporada {selectedYear}</Text>
+                                </View>
+                                <MaterialIcons name="file-download" size={24} color="#2E7D32" />
+                            </TouchableOpacity>
+
+                            {events.map(event => (
+                                <TouchableOpacity
+                                    key={event.id}
+                                    style={styles.eventItem}
+                                    onPress={() => handleExcelExport(event.id)}
+                                >
+                                    <View>
+                                        <Text style={styles.eventName}>{event.nombre}</Text>
+                                        <Text style={styles.eventDate}>{new Date(event.fecha).toLocaleDateString()}</Text>
+                                    </View>
+                                    <MaterialIcons name="chevron-right" size={24} color="#BDBDBD" />
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                </View>
+            )}
 
             {loading && (
                 <View style={styles.loadingOverlay}>
@@ -905,14 +985,7 @@ export default function ExportScreen() {
                     <Text style={styles.loadingText}>Preparando archivo...</Text>
                 </View>
             )}
-
-            <View style={styles.footerInfo}>
-                <MaterialIcons name="info-outline" size={20} color="#757575" />
-                <Text style={styles.footerText}>
-                    Los archivos CSV se pueden abrir directamente en Google Sheets o Excel para su edición profesional.
-                </Text>
-            </View>
-        </ScrollView>
+        </View>
     );
 }
 
@@ -1030,5 +1103,61 @@ const styles = StyleSheet.create({
         color: '#757575',
         marginLeft: 12,
         lineHeight: 18
+    },
+    modalOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'flex-end',
+        zIndex: 2000
+    },
+    modalContent: {
+        backgroundColor: 'white',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        paddingTop: 20,
+        paddingHorizontal: 20,
+        maxHeight: '80%'
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20,
+        paddingHorizontal: 4
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: '800',
+        color: '#212121'
+    },
+    eventList: {
+        marginBottom: 30
+    },
+    eventItem: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingVertical: 16,
+        paddingHorizontal: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F5F5F5',
+        backgroundColor: '#FCFCFC',
+        marginBottom: 8,
+        borderRadius: 12
+    },
+    eventName: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#424242',
+        marginBottom: 2
+    },
+    eventDate: {
+        fontSize: 13,
+        color: '#757575',
+        fontWeight: '500'
     }
 });

@@ -101,6 +101,25 @@ export default function AnnouncementsScreen({ navigation }) {
 
     useFocusEffect(
         useCallback(() => {
+            navigation.setOptions({
+                headerTitle: 'Anuncios',
+                headerTitleAlign: 'center',
+                headerLeft: () => (
+                    <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginLeft: 8, padding: 8 }}>
+                        <MaterialIcons name="arrow-back" size={26} color="#212121" />
+                    </TouchableOpacity>
+                ),
+                headerRight: () => (
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('EventsList')}
+                        style={{ marginRight: 12, flexDirection: 'row', alignItems: 'center' }}
+                    >
+                        <MaterialIcons name="event" size={24} color="#5E35B1" />
+                    </TouchableOpacity>
+                ),
+                headerShown: true,
+                headerStyle: { backgroundColor: '#F8F9FA' }
+            });
             fetchAnnouncements();
         }, [isOffline])
     );
@@ -285,24 +304,7 @@ export default function AnnouncementsScreen({ navigation }) {
 
     return (
         <View style={styles.container}>
-            {/* Header / Top bar with navigation to Events */}
-            <View style={styles.topBar}>
-                <TouchableOpacity
-                    style={styles.menuButton}
-                    onPress={() => setMenuVisible(true)}
-                >
-                    <MaterialIcons name="menu" size={28} color="white" />
-                </TouchableOpacity>
-                <Text style={styles.topBarTitle}>Anuncios</Text>
-                <TouchableOpacity
-                    style={styles.eventsButton}
-                    onPress={() => navigation.navigate('EventsList')}
-                >
-                    <MaterialIcons name="calendar-today" size={20} color="white" />
-                    <Text style={styles.eventsButtonText}>Eventos</Text>
-                </TouchableOpacity>
-            </View>
-
+            {/* SideMenu compartido */}
             <SideMenu
                 visible={menuVisible}
                 onClose={() => setMenuVisible(false)}
@@ -437,41 +439,6 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#F8F9FA'
-    },
-    topBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingTop: 50, // For notch
-        paddingBottom: 15,
-        paddingHorizontal: 20,
-        backgroundColor: '#4527A0',
-        elevation: 4
-    },
-    topBarTitle: {
-        fontSize: 18,
-        fontWeight: '700',
-        color: 'white',
-        flex: 1,
-        textAlign: 'center'
-    },
-    menuButton: {
-        padding: 5,
-        marginRight: 10
-    },
-    eventsButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 20
-    },
-    eventsButtonText: {
-        color: 'white',
-        fontWeight: '600',
-        marginLeft: 6,
-        fontSize: 14
     },
     offlineBanner: {
         backgroundColor: '#FEE2E2',

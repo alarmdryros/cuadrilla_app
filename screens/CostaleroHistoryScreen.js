@@ -2,10 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, Alert } from 'react-native';
 import { supabase } from '../supabaseConfig';
 import { useSeason } from '../contexts/SeasonContext';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function CostaleroHistoryScreen({ route, navigation }) {
-    const { costaleroId, costaleroName: initialName } = route.params || {};
+    const { costaleroId: paramId, costaleroName: initialName } = route.params || {};
+    const { userProfile } = useAuth();
     const { selectedYear } = useSeason();
+
+    const costaleroId = paramId || userProfile?.costalero_id;
+
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [name, setName] = useState(initialName || '');
@@ -19,29 +24,43 @@ export default function CostaleroHistoryScreen({ route, navigation }) {
         const fetchHistory = async () => {
             try {
                 setLoading(true);
-                // 1. Obtener el email del costalero actual para buscar su histórico global
-                const { data: currentCostalero } = await supabase
-                    .from('costaleros')
-                    .select('nombre, apellidos, email')
-                    .eq('id', costaleroId)
-                    .single();
+                let targetEmail = null;
+                let finalName = name;
 
-                if (currentCostalero) {
-                    if (!name) {
-                        const fullName = `${currentCostalero.nombre} ${currentCostalero.apellidos}`;
-                        setName(fullName);
+                // 1. Intentar obtener datos del costalero por ID si lo tenemos
+                if (costaleroId) {
+                    const { data: cData } = await supabase
+                        .from('costaleros')
+                        .select('nombre, apellidos, email')
+                        .eq('id', costaleroId)
+                        .single();
+
+                    if (cData) {
+                        targetEmail = cData.email;
+                        if (!finalName) finalName = `${cData.nombre} ${cData.apellidos}`;
                     }
                 }
 
-                if (!currentCostalero?.email) {
+                // 2. Fallback: Si no hay email (porque no hay ID o el registro no tiene email), 
+                // y estamos viendo nuestro propio perfil, usar el email de la sesión.
+                if (!targetEmail && !paramId && userProfile) {
+                    const { data: { user } } = await supabase.auth.getUser();
+                    if (user?.email) {
+                        targetEmail = user.email;
+                    }
+                }
+
+                if (!targetEmail) {
                     throw new Error("No se encontró el email del costalero para consultar el historial global.");
                 }
 
-                // 2. Buscar todas las asistencias vinculadas a costaleros con ese email (en cualquier año)
+                if (finalName) setName(finalName);
+
+                // 3. Buscar todas las asistencias vinculadas a costaleros con ese email (en cualquier año)
                 const { data: allCostaleroIds } = await supabase
                     .from('costaleros')
                     .select('id')
-                    .eq('email', currentCostalero.email);
+                    .eq('email', targetEmail.toLowerCase().trim());
 
                 const ids = allCostaleroIds.map(c => c.id);
 

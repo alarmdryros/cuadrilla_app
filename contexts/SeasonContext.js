@@ -26,7 +26,9 @@ export const SeasonProvider = ({ children }) => {
             if (configData) {
                 const year = parseInt(configData.value, 10);
                 setCurrentYear(year);
-                setSelectedYear(year);
+                // Solo asignar selectedYear si es la primera carga (loading es true)
+                // Esto evita que saltos de red o refrescos internos cambien el año que el usuario está viendo
+                setSelectedYear(prev => (loading || !prev) ? year : prev);
             }
 
             // 2. Obtener lista de todos los años con datos (para el selector)

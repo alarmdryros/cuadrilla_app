@@ -10,7 +10,7 @@ export default function PendingListScreen({ route, navigation }) {
     const { userRole } = useAuth();
     const { eventId, eventName } = route.params || {};
 
-    const isManagement = userRole === 'admin' || userRole === 'capataz';
+    const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
     const [ausentesList, setAusentesList] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -155,7 +155,7 @@ export default function PendingListScreen({ route, navigation }) {
                 <TouchableOpacity style={{ flex: 1 }} onPress={() => handleManualAction(item)}>
                     <View style={styles.nameRow}>
                         <Text style={styles.name}>{item.apellidos}, {item.nombre}</Text>
-                        {item.trabajadera && (
+                        {!!item.trabajadera && (
                             <View style={[styles.badge, { backgroundColor: bg, borderColor: border }]}>
                                 <Text style={[styles.badgeText, { color: text }]}>T{item.trabajadera}</Text>
                             </View>

@@ -5,11 +5,15 @@ import QRCode from 'react-native-qrcode-svg';
 import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
 import { useSeason } from '../contexts/SeasonContext';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function CostaleroFormScreen({ navigation, route }) {
-    const { costaleroId, readOnly } = route.params || {};
+    const { costaleroId: paramId, readOnly } = route.params || {};
+    const { userProfile } = useAuth();
     const { currentYear } = useSeason();
     const [loading, setLoading] = useState(false);
+
+    const costaleroId = paramId || userProfile?.costalero_id;
 
     // Form state
     const [nombre, setNombre] = useState('');
@@ -22,20 +26,39 @@ export default function CostaleroFormScreen({ navigation, route }) {
     const [telefono, setTelefono] = useState('');
     const [email, setEmail] = useState('');
 
+    React.useLayoutEffect(() => {
+        navigation.setOptions({
+            headerLeft: () => (
+                <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginLeft: 8, padding: 8 }}>
+                    <MaterialIcons name="arrow-back" size={26} color="#212121" />
+                </TouchableOpacity>
+            ),
+        });
+    }, [navigation]);
+
     useEffect(() => {
         if (costaleroId) {
             loadCostalero(costaleroId);
+        } else if (userProfile?.email) {
+            loadCostalero(null, userProfile.email);
         }
-    }, [costaleroId]);
+    }, [costaleroId, userProfile?.email]);
 
-    const loadCostalero = async (id) => {
+    const loadCostalero = async (id, fallbackEmail = null) => {
         setLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('costaleros')
-                .select('*')
-                .eq('id', id)
-                .single();
+            let query = supabase.from('costaleros').select('*');
+
+            if (id) {
+                query = query.eq('id', id);
+            } else if (fallbackEmail) {
+                query = query.eq('email', fallbackEmail.toLowerCase().trim()).order('año', { ascending: false }).limit(1);
+            } else {
+                setLoading(false);
+                return;
+            }
+
+            const { data, error } = await query.single();
 
             if (error) throw error;
 
@@ -52,7 +75,9 @@ export default function CostaleroFormScreen({ navigation, route }) {
             }
         } catch (error) {
             console.error(error);
-            Alert.alert("Error", "No se pudo cargar el costalero");
+            if (id || fallbackEmail) {
+                Alert.alert("Error", "No se pudo cargar el perfil del costalero");
+            }
         }
         setLoading(false);
     };
