@@ -8,6 +8,7 @@ import { MaterialIcons } from './components/Icon';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SeasonProvider } from './contexts/SeasonContext';
 import { OfflineProvider } from './contexts/OfflineContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Screens
@@ -347,8 +348,10 @@ export default function App() {
       <SeasonProvider>
         <AuthProvider>
           <OfflineProvider>
-            <StatusBar barStyle="dark-content" backgroundColor="white" translucent={true} />
-            <AppNavigator />
+            <NotificationProvider>
+              <StatusBar barStyle="dark-content" backgroundColor="white" translucent={true} />
+              <AppNavigator />
+            </NotificationProvider>
           </OfflineProvider>
         </AuthProvider>
       </SeasonProvider>

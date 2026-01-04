@@ -14,7 +14,7 @@ export const NotificationProvider = ({ children }) => {
     // Track alerted events to avoid spamming the user (using ref to avoid stale closure in interval)
     const notifiedEventsRef = useRef(new Set());
 
-    const isAdmin = userRole === 'admin' || userRole === 'capataz';
+    const isAdmin = ['admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
     useEffect(() => {
         if (user) {

@@ -1,7 +1,7 @@
 {
   "name": "cuadrilla_app",
   "license": "0BSD",
-  "version": "2.5.15",
+  "version": "2.6.01",
   "main": "index.js",
   "scripts": {
     "start": "expo start",

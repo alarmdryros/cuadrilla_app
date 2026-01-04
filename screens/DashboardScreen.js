@@ -5,6 +5,7 @@ import { MaterialIcons } from '../components/Icon';
 import { supabase } from '../supabaseConfig';
 import { useAuth } from '../contexts/AuthContext';
 import { useSeason } from '../contexts/SeasonContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import DashboardCard from '../components/DashboardCard';
 import StatCard from '../components/StatCard';
 import SideMenu from '../components/SideMenu';
@@ -12,6 +13,7 @@ import SideMenu from '../components/SideMenu';
 export default function DashboardScreen({ navigation }) {
     const { userRole, userProfile } = useAuth();
     const { selectedYear } = useSeason();
+    const { notifications = [] } = useNotifications();
 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -132,6 +134,26 @@ export default function DashboardScreen({ navigation }) {
                     <MaterialIcons name="menu" size={28} color="#212121" />
                 </TouchableOpacity>
             ),
+            headerRight: () => isManagement ? (
+                <View style={{ marginRight: 12 }}>
+                    <TouchableOpacity onPress={() => { /* Could scroll to notifications */ }} style={{ padding: 8 }}>
+                        <MaterialIcons name="notifications-none" size={26} color="#212121" />
+                        {notifications?.length > 0 && (
+                            <View style={{
+                                position: 'absolute',
+                                top: 6,
+                                right: 6,
+                                width: 10,
+                                height: 10,
+                                borderRadius: 5,
+                                backgroundColor: '#D32F2F',
+                                borderWidth: 1.5,
+                                borderColor: 'white'
+                            }} />
+                        )}
+                    </TouchableOpacity>
+                </View>
+            ) : null,
         });
     }, [navigation, isManagement, userProfile, userRole, selectedYear]);
 
@@ -195,6 +217,61 @@ export default function DashboardScreen({ navigation }) {
                     <DashboardCard title="PRÓXIMO EVENTO" icon="event" color="#9E9E9E">
                         <Text style={styles.noDataText}>No hay eventos próximos</Text>
                     </DashboardCard>
+                )}
+
+                {/* Notificaciones Recientes (Solo Gestión) */}
+                {isManagement && (
+                    <View style={{ marginBottom: 24 }}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Avisos Recientes</Text>
+                            {notifications?.length > 0 && (
+                                <View style={styles.badgeCount}>
+                                    <Text style={styles.badgeCountText}>{notifications.length}</Text>
+                                </View>
+                            )}
+                        </View>
+
+                        <View style={styles.notificationsCard}>
+                            {notifications?.length > 0 ? (
+                                <>
+                                    {notifications.slice(0, 3).map((notif) => (
+                                        <View key={notif.id} style={styles.notificationItem}>
+                                            <View style={[styles.notifIcon, { backgroundColor: notif.tipo === 'aviso_ausencia' ? '#FFEBEE' : '#E3F2FD' }]}>
+                                                <MaterialIcons
+                                                    name={notif.tipo === 'aviso_ausencia' ? 'person-off' : 'notifications'}
+                                                    size={20}
+                                                    color={notif.tipo === 'aviso_ausencia' ? '#D32F2F' : '#1976D2'}
+                                                />
+                                            </View>
+                                            <View style={{ flex: 1, marginLeft: 12 }}>
+                                                <Text style={styles.notifTitle}>{notif.titulo}</Text>
+                                                <Text style={styles.notifMessage} numberOfLines={2}>
+                                                    {notif.emisor ? `${notif.emisor.nombre} ${notif.emisor.apellidos}: ` : ''}
+                                                    {notif.mensaje}
+                                                </Text>
+                                                {notif.motivo && (
+                                                    <Text style={styles.notifReason} numberOfLines={1}>"{notif.motivo}"</Text>
+                                                )}
+                                                <Text style={styles.notifTime}>
+                                                    {new Date(notif.created_at).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                    ))}
+                                    {notifications.length > 3 && (
+                                        <TouchableOpacity style={styles.viewAllBtn} onPress={() => { /* Handle view all */ }}>
+                                            <Text style={styles.viewAllText}>Ver todos ({notifications.length})</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </>
+                            ) : (
+                                <View style={{ alignItems: 'center', paddingVertical: 10 }}>
+                                    <MaterialIcons name="notifications-none" size={40} color="#E0E0E0" />
+                                    <Text style={{ color: '#9E9E9E', marginTop: 8 }}>No hay avisos nuevos</Text>
+                                </View>
+                            )}
+                        </View>
+                    </View>
                 )}
 
                 {/* Estadísticas */}
@@ -385,19 +462,68 @@ const styles = StyleSheet.create({
     },
     notificationItem: {
         flexDirection: 'row',
-        alignItems: 'center',
-        marginBottom: 8,
+        alignItems: 'flex-start',
+        borderBottomWidth: 1,
+        borderBottomColor: '#EEEEEE',
+        paddingBottom: 12,
+        marginBottom: 12,
     },
-    notificationText: {
+    notificationsCard: {
+        backgroundColor: 'white',
+        borderRadius: 12,
+        padding: 16,
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    notifIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    notifTitle: {
         fontSize: 14,
-        color: '#424242',
-        marginLeft: 8,
-        flex: 1,
+        fontWeight: '700',
+        color: '#212121',
+    },
+    notifMessage: {
+        fontSize: 13,
+        color: '#616161',
+        marginTop: 2,
+    },
+    notifReason: {
+        fontSize: 12,
+        color: '#757575',
+        fontStyle: 'italic',
+        marginTop: 2
+    },
+    notifTime: {
+        fontSize: 11,
+        color: '#9E9E9E',
+        marginTop: 4
+    },
+    viewAllBtn: {
+        alignItems: 'center',
+        paddingTop: 8
     },
     viewAllText: {
-        fontSize: 14,
+        fontSize: 13,
         color: '#1a5d1a',
-        fontWeight: '600',
-        marginTop: 8,
+        fontWeight: '700',
+    },
+    badgeCount: {
+        backgroundColor: '#D32F2F',
+        borderRadius: 10,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    badgeCountText: {
+        color: 'white',
+        fontSize: 10,
+        fontWeight: 'bold',
     },
 });
