@@ -3,6 +3,7 @@ import { View, Text, SectionList, TouchableOpacity, StyleSheet, ActivityIndicato
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../supabaseConfig';
 import { useSeason } from '../contexts/SeasonContext';
+import { MaterialIcons } from '../components/Icon';
 
 import { normalizeString } from '../utils/stringUtils';
 
@@ -24,6 +25,17 @@ export default function CostalerosListScreen({ navigation }) {
 
             if (error) throw error;
             setAllCostaleros(data || []);
+
+            // Diagnostic: Check if there are costaleros in OTHER years if this one has few
+            if (!data || data.length < 10) {
+                const { count: totalGlobal } = await supabase
+                    .from('costaleros')
+                    .select('*', { count: 'exact', head: true });
+
+                if (totalGlobal > (data?.length || 0)) {
+                    console.log(`Diagnostic: Found ${totalGlobal} costaleros in total vs ${(data?.length || 0)} in ${selectedYear}.`);
+                }
+            }
         } catch (error) {
             console.error(error);
             Alert.alert("Error", "No se pudieron cargar los costaleros");
@@ -36,7 +48,15 @@ export default function CostalerosListScreen({ navigation }) {
         useCallback(() => {
             navigation.setOptions({
                 title: 'Cuadrilla',
-                headerTitleAlign: 'center'
+                headerTitleAlign: 'center',
+                headerLeft: () => (
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('MainTabs', { screen: 'Dashboard' })}
+                        style={{ marginLeft: 8, padding: 8 }}
+                    >
+                        <MaterialIcons name="arrow-back" size={26} color="#212121" />
+                    </TouchableOpacity>
+                ),
             });
             fetchCostaleros();
         }, [selectedYear, navigation])
@@ -89,7 +109,33 @@ export default function CostalerosListScreen({ navigation }) {
     const renderItem = ({ item }) => (
         <TouchableOpacity
             style={styles.item}
-            onPress={() => navigation.navigate('CostaleroForm', { costaleroId: item.id })}
+            onPress={() => {
+                Alert.alert(
+                    "Opciones de Costalero",
+                    `¿Qué deseas hacer con ${item.nombre}?`,
+                    [
+                        {
+                            text: "Ver Perfil",
+                            onPress: () => navigation.navigate('CostaleroForm', {
+                                costaleroId: item.id,
+                                readOnly: true,
+                                fromManagement: true
+                            })
+                        },
+                        {
+                            text: "Editar Ficha",
+                            onPress: () => navigation.navigate('CostaleroForm', {
+                                costaleroId: item.id,
+                                readOnly: false
+                            })
+                        },
+                        {
+                            text: "Cancelar",
+                            style: "cancel"
+                        }
+                    ]
+                );
+            }}
         >
             <View>
                 <Text style={styles.name}>{item.apellidos}, {item.nombre}</Text>
@@ -138,7 +184,7 @@ export default function CostalerosListScreen({ navigation }) {
 
             <TouchableOpacity
                 style={styles.fab}
-                onPress={() => navigation.navigate('CostaleroForm')}
+                onPress={() => navigation.navigate('CostaleroForm', { isNew: true })}
             >
                 <Text style={styles.fabText}>+</Text>
             </TouchableOpacity>

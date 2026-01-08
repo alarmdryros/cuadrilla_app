@@ -52,22 +52,6 @@ export default function SuperAdminScreen({ navigation }) {
         }
     };
 
-    const handleRoleChange = (userId, currentRole, userEmail) => {
-        // Options for role change
-        Alert.alert(
-            'Gestionar Rol',
-            `Selecciona el nuevo rol para ${userEmail}:`,
-            [
-                { text: 'Cancelar', style: 'cancel' },
-                { text: 'Super Admin', onPress: () => updateUserRole(userId, 'superadmin') },
-                { text: 'Admin', onPress: () => updateUserRole(userId, 'admin') },
-                { text: 'Capataz', onPress: () => updateUserRole(userId, 'capataz') },
-                { text: 'Auxiliar', onPress: () => updateUserRole(userId, 'auxiliar') },
-                { text: 'Costalero', onPress: () => updateUserRole(userId, 'costalero') },
-            ]
-        );
-    };
-
     const updateUserRole = async (userId, newRole) => {
         try {
             const { error } = await supabase
@@ -112,6 +96,22 @@ export default function SuperAdminScreen({ navigation }) {
         </View>
     );
 
+    const [modalVisible, setModalVisible] = useState(false);
+    const [selectedUser, setSelectedUser] = useState(null);
+
+    const handleRoleChange = (userId, currentRole, userEmail) => {
+        setSelectedUser({ id: userId, email: userEmail });
+        setModalVisible(true);
+    };
+
+    const confirmRoleChange = (newRole) => {
+        if (selectedUser) {
+            updateUserRole(selectedUser.id, newRole);
+            setModalVisible(false);
+            setSelectedUser(null);
+        }
+    };
+
     return (
         <View style={styles.container}>
             <View style={styles.header}>
@@ -136,6 +136,36 @@ export default function SuperAdminScreen({ navigation }) {
                     contentContainerStyle={styles.list}
                     ListEmptyComponent={<Text style={styles.emptyText}>No se encontraron usuarios.</Text>}
                 />
+            )}
+
+            {/* Role Selection Modal */}
+            {modalVisible && (
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Gestionar Rol</Text>
+                        <Text style={styles.modalSubtitle}>Para: {selectedUser?.email}</Text>
+
+                        <TouchableOpacity style={styles.modalOption} onPress={() => confirmRoleChange('superadmin')}>
+                            <Text style={[styles.optionText, { color: '#D32F2F' }]}>Super Admin</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.modalOption} onPress={() => confirmRoleChange('admin')}>
+                            <Text style={[styles.optionText, { color: '#E64A19' }]}>Admin</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.modalOption} onPress={() => confirmRoleChange('capataz')}>
+                            <Text style={[styles.optionText, { color: '#FBC02D' }]}>Capataz</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.modalOption} onPress={() => confirmRoleChange('auxiliar')}>
+                            <Text style={[styles.optionText, { color: '#1976D2' }]}>Auxiliar</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.modalOption} onPress={() => confirmRoleChange('costalero')}>
+                            <Text style={[styles.optionText, { color: '#43A047' }]}>Costalero</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity style={[styles.modalOption, styles.cancelOption]} onPress={() => setModalVisible(false)}>
+                            <Text style={styles.cancelText}>Cancelar</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
             )}
         </View>
     );
@@ -209,4 +239,61 @@ const styles = StyleSheet.create({
         marginTop: 40,
         color: '#757575',
     },
+    modalOverlay: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000
+    },
+    modalContent: {
+        backgroundColor: 'white',
+        borderRadius: 16,
+        padding: 24,
+        width: '80%',
+        maxWidth: 400,
+        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 8,
+        textAlign: 'center',
+        color: '#212121'
+    },
+    modalSubtitle: {
+        fontSize: 14,
+        color: '#757575',
+        marginBottom: 20,
+        textAlign: 'center'
+    },
+    modalOption: {
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#EEEEEE',
+        alignItems: 'center'
+    },
+    optionText: {
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    cancelOption: {
+        borderBottomWidth: 0,
+        marginTop: 10,
+        backgroundColor: '#F5F5F5',
+        borderRadius: 8,
+    },
+    cancelText: {
+        fontSize: 16,
+        color: '#757575',
+        fontWeight: '600'
+    }
 });

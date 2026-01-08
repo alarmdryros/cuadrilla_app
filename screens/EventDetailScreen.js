@@ -13,13 +13,14 @@ export default function EventDetailScreen({ route, navigation }) {
     const { userRole, userProfile } = useAuth();
     const { eventId } = route.params || {};
 
-    const isManagement = userRole === 'admin' || userRole === 'capataz';
+    const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
     const [event, setEvent] = useState(null);
     const [asistencias, setAsistencias] = useState([]);
     const [allCostaleros, setAllCostaleros] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isEventFinished, setIsEventFinished] = useState(false);
+    const [isEventStarted, setIsEventStarted] = useState(false);
 
     // Notifications specific
     const { sendAbsenceNotification } = useNotifications();
@@ -120,9 +121,14 @@ export default function EventDetailScreen({ route, navigation }) {
                 navigation.setOptions({ title: eventData.nombre });
 
                 const now = new Date();
-                const end = new Date(eventData.fechaFin);
+                const start = new Date(eventData.fechaInicio || eventData.fecha);
+                const end = new Date(eventData.fechaFin || new Date(start.getTime() + 2 * 60 * 60 * 1000));
+
                 if (now > end) {
                     setIsEventFinished(true);
+                }
+                if (now > start) {
+                    setIsEventStarted(true);
                 }
             }
 
@@ -505,9 +511,11 @@ export default function EventDetailScreen({ route, navigation }) {
 
                 {isManagement && (
                     <>
-                        {isEventFinished && ausentesList.length > 0 && (
+                        {(isEventStarted || isEventFinished) && ausentesList.length > 0 && (
                             <View style={{ marginBottom: 10 }}>
-                                <Text style={styles.warningText}>⚠️ Evento finalizado. Quedan {ausentesList.length} sin marcar.</Text>
+                                <Text style={styles.warningText}>
+                                    ⚠️ Evento {isEventFinished ? 'finalizado' : 'en curso'}. Quedan {ausentesList.length} por marcar.
+                                </Text>
                                 <Button title="CERRAR ACTA (Marcar Ausencias)" color="#F44336" onPress={handleCloseEvent} />
                             </View>
                         )}

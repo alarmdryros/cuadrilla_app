@@ -8,7 +8,7 @@ import { MaterialIcons } from '../components/Icon';
 export default function MeasurementScreen({ route, navigation }) {
     const { eventId, eventName } = route.params;
     const { userRole } = useAuth();
-    const isManagement = userRole === 'admin' || userRole === 'capataz';
+    const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
     const [sections, setSections] = useState([]);
     const [asistencias, setAsistencias] = useState([]);

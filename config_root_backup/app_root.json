@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "58fb4299-86d1-47c8-bfc0-5ce280cb6176"
+      }
+    },
+    "android": {
+      "package": "com.zapedevil.cuadrilla_app"
+    }
+  }
+}

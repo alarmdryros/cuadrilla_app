@@ -4,13 +4,11 @@ import { MaterialIcons } from './Icon';
 import { supabase } from '../supabaseConfig';
 import { useAuth } from '../contexts/AuthContext';
 import { useSeason } from '../contexts/SeasonContext';
-import { useNotifications } from '../contexts/NotificationContext';
 import { Picker } from '@react-native-picker/picker';
 
 export default function SideMenu({ visible, onClose, navigation }) {
     const { userRole, userProfile, user } = useAuth();
     const { selectedYear, availableYears, changeSelectedYear } = useSeason();
-    const { unreadCount } = useNotifications();
 
     const isManagement = ['superadmin', 'admin', 'capataz', 'auxiliar'].includes(userRole?.toLowerCase());
 
@@ -58,9 +56,17 @@ export default function SideMenu({ visible, onClose, navigation }) {
                         showsVerticalScrollIndicator={false}
                     >
                         {/* SECCIÓN PÚBLICA / TODOS */}
+                        <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('Dashboard')}>
+                            <View style={[styles.iconContainer, { backgroundColor: '#E8F5E9' }]}>
+                                <MaterialIcons name="home" size={20} color="#1a5d1a" />
+                            </View>
+                            <Text style={styles.menuText}>Inicio</Text>
+                            <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
+                        </TouchableOpacity>
+
                         <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('Announcements')}>
                             <View style={[styles.iconContainer, { backgroundColor: '#EDE7F6' }]}>
-                                <MaterialIcons name="announcement" size={20} color="#5E35B1" />
+                                <MaterialIcons name="event-note" size={20} color="#5E35B1" />
                             </View>
                             <Text style={styles.menuText}>Tablón de Anuncios</Text>
                             <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
@@ -95,14 +101,14 @@ export default function SideMenu({ visible, onClose, navigation }) {
                                     <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
                                 </TouchableOpacity>
 
-                                <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('NotificationsList')}>
-                                    <View style={[styles.iconContainer, { backgroundColor: '#FFF3E0' }]}>
-                                        <MaterialIcons name="notifications-none" size={20} color="#FF9800" />
+                                <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('DatosPalio')}>
+                                    <View style={[styles.iconContainer, { backgroundColor: '#E0F7FA' }]}>
+                                        <MaterialIcons name="view-list" size={20} color="#0097A7" />
                                     </View>
-                                    <Text style={styles.menuText}>Buzón de Avisos</Text>
-                                    {unreadCount > 0 && <View style={styles.menuBadge}><Text style={styles.menuBadgeText}>{unreadCount}</Text></View>}
+                                    <Text style={styles.menuText}>Datos Palio</Text>
                                     <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" style={{ marginLeft: 'auto' }} />
                                 </TouchableOpacity>
+
 
                                 <TouchableOpacity style={styles.menuItem} onPress={() => navigateAndClose('Export')}>
                                     <View style={[styles.iconContainer, { backgroundColor: '#E8F5E9' }]}>
@@ -127,11 +133,10 @@ export default function SideMenu({ visible, onClose, navigation }) {
                                 <View style={styles.sectionDivider} />
                                 <Text style={styles.sectionTitle}>MI PERFIL</Text>
                                 <TouchableOpacity style={styles.menuItem} onPress={() => {
-                                    if (userProfile?.costalero_id) {
-                                        navigateAndClose('CostaleroHistory', { costaleroId: userProfile.costalero_id });
-                                    } else {
-                                        Alert.alert("Error", "No tienes un perfil de costalero vinculado.");
-                                    }
+                                    navigateAndClose('CostaleroHistory', {
+                                        costaleroId: userProfile?.costalero_id,
+                                        costaleroName: userProfile?.nombre
+                                    });
                                 }}>
                                     <View style={[styles.iconContainer, { backgroundColor: '#E1F5FE' }]}>
                                         <MaterialIcons name="history" size={20} color="#0288D1" />
@@ -141,14 +146,10 @@ export default function SideMenu({ visible, onClose, navigation }) {
                                 </TouchableOpacity>
 
                                 <TouchableOpacity style={styles.menuItem} onPress={() => {
-                                    if (userProfile?.costalero_id) {
-                                        navigateAndClose('CostaleroForm', {
-                                            costaleroId: userProfile.costalero_id,
-                                            readOnly: true
-                                        });
-                                    } else {
-                                        Alert.alert("Error", "No tienes un perfil de costalero vinculado.");
-                                    }
+                                    navigateAndClose('CostaleroForm', {
+                                        costaleroId: userProfile?.costalero_id,
+                                        readOnly: true
+                                    });
                                 }}>
                                     <View style={[styles.iconContainer, { backgroundColor: '#F3E5F5' }]}>
                                         <MaterialIcons name="person-outline" size={20} color="#9C27B0" />
@@ -201,7 +202,7 @@ export default function SideMenu({ visible, onClose, navigation }) {
                             <MaterialIcons name="logout" size={20} color="#D32F2F" />
                             <Text style={styles.logoutText}>Cerrar Sesión</Text>
                         </TouchableOpacity>
-                        <Text style={styles.versionText}>v2.4.1</Text>
+                        <Text style={styles.versionText}>v2.6.01</Text>
                     </View>
                 </View>
             </TouchableOpacity>
@@ -276,21 +277,6 @@ const styles = StyleSheet.create({
         fontWeight: '800',
         color: '#424242',
         letterSpacing: 0.3
-    },
-    menuBadge: {
-        backgroundColor: '#D32F2F',
-        borderRadius: 10,
-        minWidth: 20,
-        height: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginLeft: 10,
-        paddingHorizontal: 6
-    },
-    menuBadgeText: {
-        color: 'white',
-        fontSize: 10,
-        fontWeight: 'bold'
     },
     sectionDivider: {
         height: 1,

@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "expo-dev-client": "~6.0.20",
+    "react-native-qrcode-scanner": "^1.5.5"
+  }
+}

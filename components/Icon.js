@@ -43,7 +43,7 @@ if (Platform.OS === 'web') {
     'error': ReactIcons.MdError,
     'check-circle': ReactIcons.MdCheckCircle,
     'cancel': ReactIcons.MdCancel,
-    // Nuevos iconos añadidos para el menú
+    // Iconos del Menú y Dashboard
     'event-note': ReactIcons.MdEventNote,
     'add-circle-outline': ReactIcons.MdAddCircleOutline,
     'chevron-right': ReactIcons.MdChevronRight,
@@ -55,6 +55,28 @@ if (Platform.OS === 'web') {
     'date-range': ReactIcons.MdDateRange,
     'logout': ReactIcons.MdLogout,
     'menu': ReactIcons.MdMenu,
+    'home': ReactIcons.MdHome,
+    'announcement': ReactIcons.MdAnnouncement,
+    // Dashboard y Estadísticas
+    'place': ReactIcons.MdPlace,
+    'schedule': ReactIcons.MdSchedule,
+    'timer': ReactIcons.MdTimer,
+    'event-available': ReactIcons.MdEventAvailable,
+    'people': ReactIcons.MdPeople,
+    'campaign': ReactIcons.MdCampaign,
+    'add-circle': ReactIcons.MdAddCircle,
+    'notifications-active': ReactIcons.MdNotificationsActive,
+    'fiber-manual-record': ReactIcons.MdFiberManualRecord,
+    'notifications-active': ReactIcons.MdNotificationsActive,
+    // Perfil y Formularios
+    'grid-view': ReactIcons.MdGridView,
+    'vertical-align-top': ReactIcons.MdVerticalAlignTop,
+    'phone': ReactIcons.MdPhone,
+    'email': ReactIcons.MdEmail,
+    'assessment': ReactIcons.MdAssessment,
+    'chat': ReactIcons.MdChat,
+    'call': ReactIcons.MdCall,
+    'delete-outline': ReactIcons.MdDeleteOutline,
   };
 
   // Web Icon component wrapper

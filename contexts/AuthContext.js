@@ -1,8 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, useRef } from 'react';
 import { Alert, AppState, Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
-import Constants from 'expo-constants';
 import { supabase } from '../supabaseConfig';
 import { useSeason } from './SeasonContext';
 
@@ -23,8 +20,6 @@ export const AuthProvider = ({ children }) => {
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
             if (session?.user) {
                 await loadUserProfile();
-                // Solicitar permisos de notificación tras login exitoso
-                registerForPushNotifications(session.user.id);
             } else {
                 setUser(null);
                 setUserRole(null);
@@ -69,92 +64,79 @@ export const AuthProvider = ({ children }) => {
     const { selectedYear } = useSeason();
 
     const loadUserProfile = async () => {
-        // Safety timeout to prevent infinite loading
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Auth timeout')), 5000)
-        );
-
         try {
-            // Race between actual fetch and 5s timeout
-            await Promise.race([
-                (async () => {
-                    const { data: { user } } = await supabase.auth.getUser();
+            const { data: { user } } = await supabase.auth.getUser();
 
-                    if (user) {
-                        const { data: profiles, error } = await supabase
+            if (user) {
+                const { data: profiles, error } = await supabase
+                    .from('user_profiles')
+                    .select('*')
+                    .eq('id', user.id);
+
+                let profile = profiles && profiles.length > 0 ? profiles[0] : null;
+
+                // Buscar siempre si el usuario tiene un registro en la tabla costaleros para obtener su nombre real
+                const { data: costaleros } = await supabase
+                    .from('costaleros')
+                    .select('id, año, nombre')
+                    .eq('email', user.email.toLowerCase().trim())
+                    .order('año', { ascending: false });
+
+                if (costaleros && costaleros.length > 0) {
+                    // 1. Intentar el del año seleccionado
+                    const current = costaleros.find(c => c.año === selectedYear) || costaleros[0];
+                    profile.costalero_id = current.id;
+                    profile.nombre = current.nombre; // Añadido nombre al perfil
+                } else {
+                    // Fallback: usar nombre de los metadatos de Supabase si existen
+                    profile.nombre = user.user_metadata?.full_name || user.user_metadata?.nombre;
+                }
+
+                // Autocuración logic (si no hay perfil pero el email existe en costaleros)
+                if (!profile) {
+                    const { data: costaleroData } = await supabase
+                        .from('costaleros')
+                        .select('id')
+                        .eq('email', user.email.toLowerCase().trim())
+                        .limit(1);
+
+                    if (costaleroData && costaleroData.length > 0) {
+                        const { data: newProfile, error: createError } = await supabase
                             .from('user_profiles')
-                            .select('*')
-                            .eq('id', user.id);
+                            .insert({
+                                id: user.id,
+                                email: user.email,
+                                role: 'costalero'
+                            })
+                            .select()
+                            .single();
 
-                        let profile = profiles && profiles.length > 0 ? profiles[0] : null;
-
-                        if (profile && profile.role === 'costalero') {
-                            const { data: currentCostalero } = await supabase
-                                .from('costaleros')
-                                .select('id')
-                                .eq('email', user.email.toLowerCase().trim())
-                                .eq('año', selectedYear)
-                                .single();
-
-                            if (currentCostalero) {
-                                profile.costalero_id = currentCostalero.id;
-                            } else {
-                                profile.costalero_id = null;
-                            }
+                        if (!createError && newProfile) {
+                            profile = newProfile;
+                            profile.costalero_id = costaleroData[0].id;
                         }
-
-                        // Autocuración logic
-                        if (!profile) {
-                            const { data: costalero } = await supabase
-                                .from('costaleros')
-                                .select('id')
-                                .eq('email', user.email.toLowerCase().trim())
-                                .single();
-
-                            if (costalero) {
-                                const { data: newProfile, error: createError } = await supabase
-                                    .from('user_profiles')
-                                    .insert({
-                                        id: user.id,
-                                        email: user.email,
-                                        role: 'costalero',
-                                        costalero_id: costalero.id
-                                    })
-                                    .select()
-                                    .single();
-
-                                if (!createError && newProfile) {
-                                    profile = newProfile;
-                                }
-                            }
-                        }
-
-                        if (!profile) {
-                            Alert.alert(
-                                "Acceso Denegado",
-                                "Tu usuario no tiene un perfil vinculado. Contacta con tu capataz.",
-                                [{ text: "Entendido" }]
-                            );
-                            await supabase.auth.signOut();
-                            setUser(null);
-                            setUserRole(null);
-                            setUserProfile(null);
-                            return;
-                        }
-
-                        setUserProfile(profile);
-                        setUserRole(profile?.role || 'costalero');
-                        setUser(user);
                     }
-                })(),
-                timeoutPromise
-            ]);
+                }
 
-        } catch (error) {
-            console.error('Auth check finished with:', error.message);
-            if (error?.message === 'Auth timeout') {
-                console.log('Auth timed out, assuming stuck state. Clearing loading.');
+                if (!profile) {
+                    Alert.alert(
+                        "Acceso Denegado",
+                        "Tu usuario no tiene un perfil vinculado. Contacta con tu capataz.",
+                        [{ text: "Entendido" }]
+                    );
+                    await supabase.auth.signOut();
+                    setUser(null);
+                    setUserRole(null);
+                    setUserProfile(null);
+                    return;
+                }
+
+                setUserProfile(profile);
+                setUserRole(profile?.role || 'costalero');
+                setUser(user);
             }
+        } catch (error) {
+            console.error('Error cargando perfil:', error.message);
             if (error?.message?.includes('Refresh Token') || error?.status === 400) {
                 await signOut();
             }
@@ -174,62 +156,6 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
         setUserRole(null);
         setUserProfile(null);
-    };
-    const registerForPushNotifications = async (userId) => {
-        try {
-            let token;
-            let platform = Platform.OS;
-
-            if (Platform.OS === 'web') {
-                const registration = await navigator.serviceWorker.ready;
-                const permission = await Notification.requestPermission();
-
-                if (permission === 'granted') {
-                    const subscription = await registration.pushManager.subscribe({
-                        userVisibleOnly: true,
-                        applicationServerKey: 'BKe10MVFnn2jos1RJERocZ-nV18S9qdWJJfpRcEThxO1jsYCRDPPUodYfQP2lmcrV7GQ4kztfZ2cXDgIGFhmkaY'
-                    });
-                    token = JSON.stringify(subscription);
-                }
-            } else {
-                if (Device.isDevice) {
-                    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-                    let finalStatus = existingStatus;
-                    if (existingStatus !== 'granted') {
-                        const { status } = await Notifications.requestPermissionsAsync();
-                        finalStatus = status;
-                    }
-                    if (finalStatus !== 'granted') {
-                        console.log('Fallo al obtener el token para notificaciones push!');
-                        return;
-                    }
-                    token = (await Notifications.getExpoPushTokenAsync({
-                        projectId: Constants.expoConfig.extra.eas.projectId,
-                    })).data;
-                } else {
-                    console.log('Debes usar un dispositivo físico para notificaciones push nativas');
-                }
-            }
-
-            if (token) {
-                const { error } = await supabase
-                    .from('push_subscriptions')
-                    .upsert({
-                        user_id: userId,
-                        token: token,
-                        platform: Platform.OS === 'web' ? 'web' : 'native',
-                        device_info: {
-                            model: Device.modelName,
-                            os: Device.osName,
-                            version: Device.osVersion
-                        }
-                    }, { onConflict: 'user_id, token' });
-
-                if (error) console.error('Error guardando token push:', error);
-            }
-        } catch (error) {
-            console.error('Error en registro de notificaciones:', error);
-        }
     };
 
     return (
