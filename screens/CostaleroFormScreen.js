@@ -8,12 +8,13 @@ import { useSeason } from '../contexts/SeasonContext';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function CostaleroFormScreen({ navigation, route }) {
-    const { costaleroId: paramId, readOnly } = route.params || {};
+    const { costaleroId: paramId, readOnly, isNew } = route.params || {};
     const { userProfile } = useAuth();
     const { currentYear } = useSeason();
     const [loading, setLoading] = useState(false);
 
-    const costaleroId = paramId || userProfile?.costalero_id;
+    // Si es nuevo, NO usamos el ID del usuario actual (que sería el admin)
+    const costaleroId = isNew ? null : (paramId || userProfile?.costalero_id);
 
     // Form state
     const [nombre, setNombre] = useState('');
@@ -28,13 +29,24 @@ export default function CostaleroFormScreen({ navigation, route }) {
 
     React.useLayoutEffect(() => {
         navigation.setOptions({
+            headerTitle: readOnly ? "Perfil de Costalero" : (costaleroId ? "Editar Costalero" : "Nuevo Costalero"),
             headerLeft: () => (
-                <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginLeft: 8, padding: 8 }}>
+                <TouchableOpacity
+                    onPress={() => {
+                        if (navigation.canGoBack()) {
+                            navigation.goBack();
+                        } else {
+                            // Navegar al Dashboard de forma segura (dentro de MainTabs)
+                            navigation.navigate('MainTabs', { screen: 'Dashboard' });
+                        }
+                    }}
+                    style={{ marginLeft: 8, padding: 8 }}
+                >
                     <MaterialIcons name="arrow-back" size={26} color="#212121" />
                 </TouchableOpacity>
             ),
         });
-    }, [navigation]);
+    }, [navigation, readOnly, costaleroId, route.params]);
 
     useEffect(() => {
         if (costaleroId) {
@@ -58,7 +70,7 @@ export default function CostaleroFormScreen({ navigation, route }) {
                 return;
             }
 
-            const { data, error } = await query.single();
+            const { data, error } = await query.maybeSingle();
 
             if (error) throw error;
 

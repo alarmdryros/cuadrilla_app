@@ -50,7 +50,10 @@ export default function CostalerosListScreen({ navigation }) {
                 title: 'Cuadrilla',
                 headerTitleAlign: 'center',
                 headerLeft: () => (
-                    <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginLeft: 8, padding: 8 }}>
+                    <TouchableOpacity
+                        onPress={() => navigation.navigate('MainTabs', { screen: 'Dashboard' })}
+                        style={{ marginLeft: 8, padding: 8 }}
+                    >
                         <MaterialIcons name="arrow-back" size={26} color="#212121" />
                     </TouchableOpacity>
                 ),
@@ -106,7 +109,33 @@ export default function CostalerosListScreen({ navigation }) {
     const renderItem = ({ item }) => (
         <TouchableOpacity
             style={styles.item}
-            onPress={() => navigation.navigate('CostaleroForm', { costaleroId: item.id })}
+            onPress={() => {
+                Alert.alert(
+                    "Opciones de Costalero",
+                    `¿Qué deseas hacer con ${item.nombre}?`,
+                    [
+                        {
+                            text: "Ver Perfil",
+                            onPress: () => navigation.navigate('CostaleroForm', {
+                                costaleroId: item.id,
+                                readOnly: true,
+                                fromManagement: true
+                            })
+                        },
+                        {
+                            text: "Editar Ficha",
+                            onPress: () => navigation.navigate('CostaleroForm', {
+                                costaleroId: item.id,
+                                readOnly: false
+                            })
+                        },
+                        {
+                            text: "Cancelar",
+                            style: "cancel"
+                        }
+                    ]
+                );
+            }}
         >
             <View>
                 <Text style={styles.name}>{item.apellidos}, {item.nombre}</Text>
@@ -155,7 +184,7 @@ export default function CostalerosListScreen({ navigation }) {
 
             <TouchableOpacity
                 style={styles.fab}
-                onPress={() => navigation.navigate('CostaleroForm')}
+                onPress={() => navigation.navigate('CostaleroForm', { isNew: true })}
             >
                 <Text style={styles.fabText}>+</Text>
             </TouchableOpacity>
